@@ -1,5 +1,5 @@
 project: verilator
-target: verilator
+target: verilator-bin
 
 cmds:
   - cmd: /repo/bin/verilator_bin /repo/bin/test.v --xml-only
