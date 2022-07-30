@@ -2,5 +2,5 @@ project: verilator
 target: verilator-bin
 
 cmds:
-  - cmd: /repo/bin/verilator_bin /repo/bin/test.v --xml-only
-    filepath: /repo/bin/test.v
+  - cmd: /install/bin/verilator_bin @@ --xml-only
+    filepath: /test.v

@@ -6,14 +6,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential git perl p
 COPY . /repo
 WORKDIR /repo
 RUN autoconf
-RUN ./configure
+RUN ./configure --prefix=/install
 RUN make -j8
+RUN make install
 
-RUN mkdir -p /deps
-RUN ldd /repo/bin/verilator_bin | tr -s '[:blank:]' '\n' | grep '^/' | xargs -I % sh -c 'cp % /deps;'
-
-FROM ubuntu:20.04 as package
-
-COPY --from=builder /deps /deps
-COPY --from=builder /repo/bin/verilator_bin /repo/bin/verilator_bin
-ENV LD_LIBRARY_PATH=/deps
+FROM ubuntu:22.04 as package
+COPY --from=builder /install /install
