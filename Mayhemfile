@@ -3,4 +3,4 @@ target: verilator-bin
 
 cmds:
   - cmd: /install/bin/verilator_bin @@ --xml-only
-    filepath: /test.v
+    filepath: /install/bin/test.v
