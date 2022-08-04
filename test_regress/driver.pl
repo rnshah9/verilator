@@ -77,7 +77,6 @@ my $opt_gdbbt;
 my $opt_gdbsim;
 my $opt_hashset;
 my $opt_jobs = 1;
-my $opt_optimize;
 my $opt_quiet;
 my $opt_rerun;
 my $opt_rrsim;
@@ -104,7 +103,6 @@ if (! GetOptions(
           "hashset=s"   => \$opt_hashset,
           "help"        => \&usage,
           "j=i"         => \$opt_jobs,
-          "optimize:s"  => \$opt_optimize,
           "quiet!"      => \$opt_quiet,
           "rerun!"      => \$opt_rerun,
           "rr!"         => \$opt_rr,
@@ -580,6 +578,8 @@ sub new {
         make_pli => 0,          # need to compile pli
         sc_time_resolution => "SC_PS",  # Keep - PS is SystemC default
         sim_time => 1100,
+        threads => -1,          # --threads (negative means auto based on scenario)
+        context_threads => 0,   # Number of threads to allocate in the context
         benchmark => $opt_benchmark,
         verbose => $opt_verbose,
         run_env => '',
@@ -661,7 +661,7 @@ sub new {
         verilator_define => 'VERILATOR',
         verilator_flags => ["-cc",
                             "-Mdir $self->{obj_dir}",
-                            "-OD",  # As currently disabled unless -O3
+                            "--fdedup",  # As currently disabled unless -O3
                             "--debug-check",
                             "--comp-limit-members 10", ],
         verilator_flags2 => [],
@@ -904,6 +904,7 @@ sub compile_vlt_flags {
                           @{$param{verilator_flags}},
                           @{$param{verilator_flags2}},
                           @{$param{verilator_flags3}});
+    die "%Error: specify threads via 'threads =>' argument, not as a command line option" unless ($checkflags !~ /(^|\s)-?-threads\s/ && $checkflags !~ /(^|\s)-?-no-threads($|\s)/);
     $self->{sc} = 1 if ($checkflags =~ /-sc\b/);
     $self->{trace} = ($opt_trace || $checkflags =~ /-trace\b/
                       || $checkflags =~ /-trace-fst\b/);
@@ -922,8 +923,7 @@ sub compile_vlt_flags {
     unshift @verilator_flags, "--rr" if $opt_rr;
     unshift @verilator_flags, "--x-assign unique";  # More likely to be buggy
     unshift @verilator_flags, "--trace" if $opt_trace;
-    my $threads = ::calc_threads($Vltmt_threads);
-    unshift @verilator_flags, "--threads $threads" if $param{vltmt} && $checkflags !~ /-threads /;
+    unshift @verilator_flags, "--threads $param{threads}" if $param{threads} >= 0;
     unshift @verilator_flags, "--trace-threads 2" if $param{vltmt} && $checkflags =~ /-trace-fst /;
     unshift @verilator_flags, "--debug-partition" if $param{vltmt};
     unshift @verilator_flags, "-CFLAGS -ggdb -LDFLAGS -ggdb" if $opt_gdbsim;
@@ -934,19 +934,6 @@ sub compile_vlt_flags {
         $param{make_main} && $param{verilator_make_gmake};
     unshift @verilator_flags, "../" . $self->{main_filename} if
         $param{make_main} && $param{verilator_make_gmake};
-    if (defined $opt_optimize) {
-        my $letters = "";
-        if ($opt_optimize =~ /[a-zA-Z]/) {
-            $letters = $opt_optimize;
-        } else {  # Randomly turn on/off different optimizations
-            foreach my $l ('a' .. 'z') {
-                $letters .= ((rand() > 0.5) ? $l : uc $l);
-            }
-            unshift @verilator_flags, "--trace" if rand() > 0.5;
-            unshift @verilator_flags, "--coverage" if rand() > 0.5;
-        }
-        unshift @verilator_flags, "--O" . $letters;
-    }
 
     my @cmdargs = (
                    "--prefix " . $param{VM_PREFIX},
@@ -986,6 +973,13 @@ sub compile {
                  %{$self}, @_);  # Default arguments are from $self
     return 1 if $self->errors || $self->skips || $self->unsupporteds;
     $self->oprint("Compile\n") if $self->{verbose};
+
+    die "%Error: 'threads =>' argument must be <= 1 for vlt scenario" if $param{vlt} && $param{threads} > 1;
+    # Compute automatic parameter values
+    $param{threads} = ::calc_threads($Vltmt_threads) if $param{threads} < 0 && $param{vltmt};
+    $param{context_threads} = $param{threads} >= 1 ? $param{threads} : 1 if !$param{context_threads};
+    $self->{threads} = $param{threads};
+    $self->{context_threads} = $param{context_threads};
 
     compile_vlt_cmd(%param);
 
@@ -1122,11 +1116,6 @@ sub compile {
 
         if ($self->sc && !$self->have_sc) {
             $self->skip("Test requires SystemC; ignore error since not installed\n");
-            return 1;
-        }
-
-        if ($self->{vltmt} && !$self->cfg_with_threaded) {
-            $self->skip("Test requires Verilator configured with threads\n");
             return 1;
         }
 
@@ -1811,6 +1800,7 @@ sub _make_main {
     }
 
     print $fh "    const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};\n";
+    print $fh "    contextp->threads($self->{context_threads});\n";
     print $fh "    contextp->commandArgs(argc, argv);\n";
     print $fh "    contextp->debug(" . ($self->{verilated_debug} ? 1 : 0) . ");\n";
     print $fh "    srand48(5);\n";  # Ensure determinism
@@ -2269,10 +2259,15 @@ sub vcd_identical {
         print "\t$cmd\n" if $::Debug;
         $out = `$cmd`;
         if ($? != 0 || $out ne '') {
-            print $out;
-            $self->error("VCD miscompares $fn1 $fn2\n");
-            $self->copy_if_golden($fn1, $fn2);
-            return 0;
+            $cmd = qq{vcddiff "$fn2" "$fn1"};
+            print "\t$cmd\n" if $::Debug;
+            $out = `$cmd`;
+            if ($? != 0 || $out ne '') {
+                print $out;
+                $self->error("VCD miscompares $fn2 $fn1\n");
+                $self->copy_if_golden($fn1, $fn2);
+                return 0;
+            }
         }
     }
     {
@@ -2353,10 +2348,6 @@ our $_Cxx_Version;
 sub cxx_version {
     $_Cxx_Version ||= `$ENV{MAKE} -C $ENV{VERILATOR_ROOT}/test_regress -f Makefile print-cxx-version`;
     return $_Cxx_Version;
-}
-
-sub cfg_with_threaded {
-    return 1;  # C++11 now always required
 }
 
 our $_Cfg_with_ccache;
@@ -2905,11 +2896,6 @@ Displays this message and program version and exits.
 
 Run number of parallel tests, or 0 to determine the count based on the
 number of cores installed.  Requires Perl's Parallel::Forker package.
-
-=item --optimize
-
-Randomly turn on/off different optimizations.  With specific flags,
-use those optimization settings
 
 =item --quiet
 

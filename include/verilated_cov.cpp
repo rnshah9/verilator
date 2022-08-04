@@ -76,15 +76,15 @@ private:
 public:
     // METHODS
     // cppcheck-suppress truncLongCastReturn
-    virtual uint64_t count() const override { return *m_countp; }
-    virtual void zero() const override { *m_countp = 0; }
+    uint64_t count() const override { return *m_countp; }
+    void zero() const override { *m_countp = 0; }
     // CONSTRUCTORS
     // cppcheck-suppress noExplicitConstructor
     explicit VerilatedCoverItemSpec(T* countp)
         : m_countp{countp} {
         *m_countp = 0;
     }
-    virtual ~VerilatedCoverItemSpec() override = default;
+    ~VerilatedCoverItemSpec() override = default;
 };
 
 //=============================================================================
@@ -122,7 +122,7 @@ public:
 
 protected:
     friend class VerilatedCovContext;
-    virtual ~VerilatedCovImp() override { clearGuts(); }
+    ~VerilatedCovImp() override { clearGuts(); }
 
 private:
     // PRIVATE METHODS
@@ -205,7 +205,7 @@ private:
         // Forward to . so we have a whole word
         const std::string suffix = *bpost ? std::string{bpost + 1} : "";
 
-        const std::string out = prefix + "*" + suffix;
+        std::string out = prefix + "*" + suffix;
 
         // cout << "\nch pre="<<prefix<<"  s="<<suffix<<"\nch a="<<old<<"\nch b="<<add
         // <<"\ncho="<<out<<endl;
@@ -511,8 +511,10 @@ VerilatedCovContext* VerilatedCov::threadCovp() VL_MT_SAFE {
 
 VerilatedCovContext* VerilatedContext::coveragep() VL_MT_SAFE {
     static VerilatedMutex s_mutex;
+    // cppcheck-suppress identicalInnerCondition
     if (VL_UNLIKELY(!m_coveragep)) {
         const VerilatedLockGuard lock{s_mutex};
+        // cppcheck-suppress identicalInnerCondition
         if (VL_LIKELY(!m_coveragep)) {  // Not redundant, prevents race
             m_coveragep.reset(new VerilatedCovImp);
         }

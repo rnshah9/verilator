@@ -414,7 +414,7 @@ public:
     // Given an AstNode list (held via AstNode::nextp()), move conditional statements as close
     // together as possible
     static AstNode* optimize(AstNode* nodep, const StmtPropertiesAllocator& stmtProperties) {
-        CodeMotionOptimizeVisitor{nodep, stmtProperties};
+        { CodeMotionOptimizeVisitor{nodep, stmtProperties}; }
         // It is possible for the head of the list to be moved later such that it is no longer
         // in head position. If so, rewind the list and return the new head.
         while (nodep->backp()->nextp() == nodep) nodep = nodep->backp();
@@ -477,10 +477,12 @@ private:
             AstNode* currp = m_workQueuep->front();
             m_workQueuep->pop();
 
-            // Analyse sub-tree list for code motion
+            // Analyse sub-tree list for code motion and conditional merging
             CodeMotionAnalysisVisitor::analyze(currp, stmtProperties);
             // Perform the code motion within the whole sub-tree list
-            currp = CodeMotionOptimizeVisitor::optimize(currp, stmtProperties);
+            if (v3Global.opt.fMergeCondMotion()) {
+                currp = CodeMotionOptimizeVisitor::optimize(currp, stmtProperties);
+            }
 
             // Merge conditionals in the whole sub-tree list (this might create new work items)
             iterateAndNextNull(currp);
@@ -788,6 +790,8 @@ private:
     // otherwise end the current merge. Return ture if added, false if ended merge.
     bool addIfHelpfulElseEndMerge(AstNodeStmt* nodep) {
         UASSERT_OBJ(m_mgFirstp, nodep, "List must be open");
+        if (!checkOrMakeMergeable(nodep)) return false;
+        if (!m_mgFirstp) return false;  // If 'checkOrMakeMergeable' closed the list
         if (m_mgNextp == nodep) {
             if (isSimplifiableNode(nodep)) {
                 if (addToList(nodep, nullptr)) return true;

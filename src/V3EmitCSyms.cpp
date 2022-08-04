@@ -445,15 +445,15 @@ void EmitCSyms::emitSymHdr() {
     }
     puts("bool __Vm_didInit = false;\n");
 
-    if (v3Global.opt.profExec()) {
-        puts("\n// EXECUTION PROFILING\n");
-        puts("VlExecutionProfiler __Vm_executionProfiler;\n");
-    }
-
     if (v3Global.opt.mtasks()) {
         puts("\n// MULTI-THREADING\n");
         puts("VlThreadPool* const __Vm_threadPoolp;\n");
         puts("bool __Vm_even_cycle = false;\n");
+    }
+
+    if (v3Global.opt.profExec()) {
+        puts("\n// EXECUTION PROFILING\n");
+        puts("VlExecutionProfiler* const __Vm_executionProfilerp;\n");
     }
 
     puts("\n// MODULE INSTANCE STATE\n");
@@ -673,12 +673,11 @@ void EmitCSyms::emitSymImp() {
         puts("_vm_pgoProfiler.write(\"" + topClassName()
              + "\", _vm_contextp__->profVltFilename());\n");
     }
-    if (v3Global.opt.mtasks()) puts("delete __Vm_threadPoolp;\n");
     puts("}\n\n");
 
     // Constructor
-    puts(symClassName() + "::" + symClassName() + "(VerilatedContext* contextp, const char* namep,"
-         + topClassName() + "* modelp)\n");
+    puts(symClassName() + "::" + symClassName()
+         + "(VerilatedContext* contextp, const char* namep, " + topClassName() + "* modelp)\n");
     puts("    : VerilatedSyms{contextp}\n");
     puts("    // Setup internal state of the Syms class\n");
     puts("    , __Vm_modelp{modelp}\n");
@@ -705,9 +704,13 @@ void EmitCSyms::emitSymImp() {
         // Note we create N-1 threads in the thread pool. The thread
         // that calls eval() becomes the final Nth thread for the
         // duration of the eval call.
-        puts("    , __Vm_threadPoolp{new VlThreadPool{_vm_contextp__, "
-             + cvtToStr(v3Global.opt.threads() - 1) + ", "
-             + (v3Global.opt.profExec() ? "&__Vm_executionProfiler" : "nullptr") + "}}\n");
+        puts("    , __Vm_threadPoolp{static_cast<VlThreadPool*>(contextp->threadPoolp())}\n");
+    }
+
+    if (v3Global.opt.profExec()) {
+        puts("    , "
+             "__Vm_executionProfilerp{static_cast<VlExecutionProfiler*>(contextp->"
+             "enableExecutionProfiler(&VlExecutionProfiler::construct))}\n");
     }
 
     puts("    // Setup module instances\n");
@@ -771,7 +774,7 @@ void EmitCSyms::emitSymImp() {
                 puts(protectIf(aboveScopep->nameDotless(), aboveScopep->protect()));
             }
             puts(".");
-            puts(protName.substr(protName.rfind(".") + 1));
+            puts(protName.substr(protName.rfind('.') + 1));
             puts(" = &");
             puts(protectIf(scopep->nameDotless(), scopep->protect()) + ";\n");
             ++m_numStmts;
@@ -948,7 +951,8 @@ void EmitCSyms::emitSymImp() {
     }
 
     closeSplit();
-    VL_DO_CLEAR(delete m_ofp, m_ofp = nullptr);
+    m_ofp = nullptr;
+    VL_DO_CLEAR(delete m_ofpBase, m_ofpBase = nullptr);
 }
 
 //######################################################################

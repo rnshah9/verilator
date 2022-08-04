@@ -109,10 +109,7 @@ private:
         } else if (m_inTracep) {
             m_inTracep->addPrecondsp(newp);
         } else if (m_stmtp) {
-            VNRelinker linker;
-            m_stmtp->unlinkFrBack(&linker);
-            newp->addNext(m_stmtp);
-            linker.relink(newp);
+            m_stmtp->addHereThisAsNext(newp);
         } else {
             newp->v3fatalSrc("No statement insertion point.");
         }
@@ -133,7 +130,7 @@ private:
                                   && !constp->num().isString();  // Not a string
         if (useConstPool) {
             // Extract into constant pool.
-            const bool merge = v3Global.opt.mergeConstPool();
+            const bool merge = v3Global.opt.fMergeConstPool();
             varp = v3Global.rootp()->constPoolp()->findConst(constp, merge)->varp();
             nodep->deleteTree();
             ++m_extractedToConstPool;
@@ -381,7 +378,7 @@ public:
         : m_tempNames{"__Vtemp"} {
         iterate(nodep);
     }
-    virtual ~PremitVisitor() {
+    ~PremitVisitor() override {
         V3Stats::addStat("Optimizations, Prelim extracted value to ConstPool",
                          m_extractedToConstPool);
     }

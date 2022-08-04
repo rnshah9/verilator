@@ -2074,10 +2074,8 @@ variable_dimension<nodeRangep>: // ==IEEE: variable_dimension
         //                      // IEEE: associative_dimension (if data_type)
         //                      // Can't tell which until see if expr is data type or not
         |       '[' exprOrDataType ']'                  { $$ = new AstBracketRange($1, $2); }
-        |       yP_BRASTAR ']'
-                        { $$ = nullptr; BBUNSUP($1, "Unsupported: [*] wildcard associative arrays"); }
-        |       '[' '*' ']'
-                        { $$ = nullptr; BBUNSUP($2, "Unsupported: [*] wildcard associative arrays"); }
+        |       yP_BRASTAR ']'                          { $$ = new AstWildcardRange{$1}; }
+        |       '[' '*' ']'                             { $$ = new AstWildcardRange{$1}; }
         //                      // IEEE: queue_dimension
         //                      // '[' '$' ']' -- $ is part of expr, see '[' constExpr ']'
         //                      // '[' '$' ':' expr ']' -- anyrange:expr:$
@@ -3546,6 +3544,7 @@ patternKey<nodep>:              // IEEE: merge structure_pattern_key, array_patt
         |       yaFLOATNUM                              { $$ = new AstConst($<fl>1,AstConst::RealDouble(),$1); }
         |       id                                      { $$ = new AstText($<fl>1,*$1); }
         |       strAsInt                                { $$ = $1; }
+        |       simple_type                             { $$ = $1; }
         ;
 
 assignment_pattern<patternp>:   // ==IEEE: assignment_pattern
@@ -3917,7 +3916,7 @@ system_f_call_or_t<nodep>:      // IEEE: part of system_tf_call (can be task or 
         |       yD_STABLE '(' expr ',' expr ')'         { $$ = $3; BBUNSUP($1, "Unsupported: $stable and clock arguments"); }
         |       yD_TAN '(' expr ')'                     { $$ = new AstTanD($1,$3); }
         |       yD_TANH '(' expr ')'                    { $$ = new AstTanhD($1,$3); }
-        |       yD_TESTPLUSARGS '(' str ')'             { $$ = new AstTestPlusArgs($1,*$3); }
+        |       yD_TESTPLUSARGS '(' expr ')'            { $$ = new AstTestPlusArgs($1, $3); }
         |       yD_TIME parenE                          { $$ = new AstTime($1, VTimescale(VTimescale::NONE)); }
         |       yD_TYPENAME '(' exprOrDataType ')'      { $$ = new AstAttrOf($1, VAttrType::TYPENAME, $3); }
         |       yD_UNGETC '(' expr ',' expr ')'         { $$ = new AstFUngetC($1, $5, $3); }  // Arg swap to file first

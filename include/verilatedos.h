@@ -235,6 +235,16 @@
 #endif
 
 //=========================================================================
+// C++-2017
+
+#if __cplusplus >= 201703L
+# define VL_CONSTEXPR_CXX17 constexpr
+#else
+# define VL_CONSTEXPR_CXX17
+#endif
+
+
+//=========================================================================
 // Optimization
 
 #ifndef VL_INLINE_OPT
@@ -245,14 +255,11 @@
 // Internal coverage
 
 #ifdef VL_GCOV
-extern "C" {
-void __gcov_flush();  // gcc sources gcc/gcov-io.h has the prototype
-}
-// Flush internal code coverage data before e.g. std::abort()
-# define VL_GCOV_FLUSH() \
-    __gcov_flush()
+extern "C" void __gcov_dump();
+// Dump internal code coverage data before e.g. std::abort()
+# define VL_GCOV_DUMP() __gcov_dump()
 #else
-# define VL_GCOV_FLUSH()
+# define VL_GCOV_DUMP()
 #endif
 
 //=========================================================================
@@ -446,7 +453,8 @@ using ssize_t = uint32_t;  ///< signed size_t; returned from read()
 // or 0x0 if not implemented on this platform
 #define VL_GET_CPU_TICK(val) \
     { \
-        uint32_t hi, lo; \
+        uint32_t hi; \
+        uint32_t lo; \
         asm volatile("rdtsc" : "=a"(lo), "=d"(hi)); \
         (val) = ((uint64_t)lo) | (((uint64_t)hi) << 32); \
     }

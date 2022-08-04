@@ -50,6 +50,7 @@ private:
     bool m_varModeReplace;  // Replacing varrefs
     bool m_varAssignHit;  // Assign var hit
     bool m_generate;  // Expand single generate For loop
+    int m_unrollLimit;  // Unrolling limit
     string m_beginName;  // What name to give begin iterations
     VDouble0 m_statLoops;  // Statistic tracking
     VDouble0 m_statIters;  // Statistic tracking
@@ -58,17 +59,13 @@ private:
     VL_DEBUG_FUNC;  // Declare debug()
 
     // VISITORS
-    bool cantUnroll(AstNode* nodep, const char* reason) {
+    bool cantUnroll(AstNode* nodep, const char* reason) const {
         if (m_generate)
             nodep->v3warn(E_UNSUPPORTED, "Unsupported: Can't unroll generate for; " << reason);
         UINFO(3, "   Can't Unroll: " << reason << " :" << nodep << endl);
         // if (debug() >= 9) nodep->dumpTree(cout, "-cant-");
         V3Stats::addStatSum(string("Unrolling gave up, ") + reason, 1);
         return false;
-    }
-
-    int unrollCount() const {
-        return m_generate ? v3Global.opt.unrollCount() * 16 : v3Global.opt.unrollCount();
     }
 
     bool bodySizeOverRecurse(AstNode* nodep, int& bodySize, int bodyLimit) {
@@ -163,7 +160,7 @@ private:
 
             // Check whether to we actually want to try and unroll.
             int loops;
-            if (!countLoops(initAssp, condp, incp, unrollCount(), loops)) {
+            if (!countLoops(initAssp, condp, incp, m_unrollLimit, loops)) {
                 return cantUnroll(nodep, "Unable to simulate loop");
             }
 
@@ -336,11 +333,11 @@ private:
                     }
 
                     ++m_statIters;
-                    if (++times > unrollCount() * 3) {
+                    if (++times / 3 > m_unrollLimit) {
                         nodep->v3error(
                             "Loop unrolling took too long;"
                             " probably this is an infinite loop, or set --unroll-count above "
-                            << unrollCount());
+                            << m_unrollLimit);
                         break;
                     }
 
@@ -485,6 +482,12 @@ public:
         m_varModeReplace = false;
         m_varAssignHit = false;
         m_generate = generate;
+        m_unrollLimit = v3Global.opt.unrollCount();
+        if (generate) {
+            m_unrollLimit = std::numeric_limits<int>::max() / 16 > m_unrollLimit
+                                ? m_unrollLimit * 16
+                                : std::numeric_limits<int>::max();
+        }
         m_beginName = beginName;
     }
     void process(AstNode* nodep, bool generate, const string& beginName) {

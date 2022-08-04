@@ -51,7 +51,7 @@ public:
         }
         spTrace()->set_time_resolution(sc_get_time_resolution().to_string());
     }
-    virtual ~VerilatedFstSc() { close(); }
+    virtual ~VerilatedFstSc() /*override*/ { close(); }
 
     // METHODS
     /// Called by SystemC simulate()
@@ -60,6 +60,7 @@ public:
     }
 
     // Override VerilatedFstC. Must be called after starting simulation.
+    // cppcheck-suppress missingOverride  // GCC won't accept override
     virtual void open(const char* filename) /*override*/ VL_MT_SAFE;
 
 private:
@@ -95,9 +96,6 @@ private:
     DECL_TRACE_METHOD_B( unsigned short )
     DECL_TRACE_METHOD_B( unsigned int )
     DECL_TRACE_METHOD_B( unsigned long )
-#ifdef SYSTEMC_64BIT_PATCHES
-    DECL_TRACE_METHOD_B( unsigned long long)
-#endif
     DECL_TRACE_METHOD_B( char )
     DECL_TRACE_METHOD_B( short )
     DECL_TRACE_METHOD_B( int )
