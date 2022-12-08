@@ -132,9 +132,9 @@ public:
     V3PreLex* const m_lexp;  // Lexer, for resource tracking
     std::deque<string> m_buffers;  // Buffer of characters to process
     int m_ignNewlines = 0;  // Ignore multiline newlines
+    int m_termState = 0;  // Termination fsm
     bool m_eof = false;  // "EOF" buffer
     bool m_file = false;  // Buffer is start of new file
-    int m_termState = 0;  // Termination fsm
     VPreStream(FileLine* fl, V3PreLex* lexp)
         : m_curFilelinep{fl}
         , m_lexp{lexp} {
@@ -143,7 +143,7 @@ public:
     ~VPreStream() { lexStreamDepthAdd(-1); }
 
 private:
-    void lexStreamDepthAdd(int delta);
+    inline void lexStreamDepthAdd(int delta);
 };
 
 //======================================================================
@@ -176,7 +176,7 @@ public:  // Used only by V3PreLex.cpp and V3PreProc.cpp
     int m_enterExit = 0;  // For VL_LINE, the enter/exit level
     int m_protLength = 0;  // unencoded length for BASE64
     int m_protBytes = 0;  // decoded length for BASE64
-    Enctype m_encType;  // encoding type for `pragma protect
+    Enctype m_encType{};  // encoding type for `pragma protect
 
     // CONSTRUCTORS
     V3PreLex(V3PreProcImp* preimpp, FileLine* filelinep)
@@ -225,9 +225,8 @@ public:  // Used only by V3PreLex.cpp and V3PreProc.cpp
     // Called by VPreStream
     void streamDepthAdd(int delta) { m_streamDepth += delta; }
     int streamDepth() const { return m_streamDepth; }
-    /// Utility
-    static int debug();
-    static void debug(int level);
+    // Utility
+    static void setYYDebug(bool on);
     static string cleanDbgStrg(const string& in);
 
 private:
@@ -237,6 +236,6 @@ private:
     void scanSwitchStream(VPreStream* streamp);
 };
 
-inline void VPreStream::lexStreamDepthAdd(int delta) { m_lexp->streamDepthAdd(delta); }
+void VPreStream::lexStreamDepthAdd(int delta) { m_lexp->streamDepthAdd(delta); }
 
 #endif  // Guard

@@ -18,6 +18,7 @@
 #include "verilatedos.h"
 
 #include "V3EmitCBase.h"
+
 #include "V3Task.h"
 
 //######################################################################
@@ -56,11 +57,11 @@ string EmitCBaseVisitor::funcNameProtect(const AstCFunc* nodep, const AstNodeMod
     return name;
 }
 
-AstCFile* EmitCBaseVisitor::newCFile(const string& filename, bool slow, bool source) {
-    AstCFile* const cfilep = new AstCFile(v3Global.rootp()->fileline(), filename);
+AstCFile* EmitCBaseVisitor::newCFile(const string& filename, bool slow, bool source, bool add) {
+    AstCFile* const cfilep = new AstCFile{v3Global.rootp()->fileline(), filename};
     cfilep->slow(slow);
     cfilep->source(source);
-    v3Global.rootp()->addFilesp(cfilep);
+    if (add) v3Global.rootp()->addFilesp(cfilep);
     return cfilep;
 }
 
@@ -209,7 +210,7 @@ void EmitCBaseVisitor::emitVarDecl(const AstVar* nodep, bool asRef) {
             // Issue 2622.
             const bool beStatic = name.size() >= suffix.size()
                                   && name.substr(name.size() - suffix.size()) == suffix;
-            if (beStatic) puts("static VL_THREAD_LOCAL ");
+            if (beStatic) puts("static thread_local ");
         }
         puts(nodep->vlArgType(true, false, false, "", asRef));
         puts(";\n");

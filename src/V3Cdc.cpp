@@ -24,18 +24,21 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Cdc.h"
+
 #include "V3Ast.h"
-#include "V3Graph.h"
 #include "V3Const.h"
 #include "V3EmitV.h"
 #include "V3File.h"
+#include "V3Global.h"
+#include "V3Graph.h"
 
 #include <algorithm>
 #include <deque>
 #include <iomanip>
 #include <memory>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 constexpr int CDC_WEIGHT_ASYNC = 0x1000;  // Weight for edges that feed async logic
 
@@ -43,7 +46,6 @@ constexpr int CDC_WEIGHT_ASYNC = 0x1000;  // Weight for edges that feed async lo
 
 class CdcBaseVisitor VL_NOT_FINAL : public VNVisitor {
 public:
-    VL_DEBUG_FUNC;  // Declare debug()
 };
 
 //######################################################################
@@ -66,9 +68,9 @@ public:
         , m_srcDomainSet{false}
         , m_dstDomainSet{false}
         , m_asyncPath{false} {}
-    virtual ~CdcEitherVertex() override = default;
+    ~CdcEitherVertex() override = default;
     // ACCESSORS
-    virtual FileLine* fileline() const override { return nodep()->fileline(); }
+    FileLine* fileline() const override { return nodep()->fileline(); }
     AstScope* scopep() const { return m_scopep; }
     AstNode* nodep() const { return m_nodep; }
     AstSenTree* srcDomainp() const { return m_srcDomainp; }
@@ -92,11 +94,11 @@ public:
     CdcVarVertex(V3Graph* graphp, AstScope* scopep, AstVarScope* varScp)
         : CdcEitherVertex{graphp, scopep, varScp}
         , m_varScp{varScp} {}
-    virtual ~CdcVarVertex() override = default;
+    ~CdcVarVertex() override = default;
     // ACCESSORS
     AstVarScope* varScp() const { return m_varScp; }
-    virtual string name() const override { return (cvtToHex(m_varScp) + " " + varScp()->name()); }
-    virtual string dotColor() const override {
+    string name() const override { return (cvtToHex(m_varScp) + " " + varScp()->name()); }
+    string dotColor() const override {
         return fromFlop() ? "green" : cntAsyncRst() ? "red" : "blue";
     }
     int cntAsyncRst() const { return m_cntAsyncRst; }
@@ -117,12 +119,10 @@ public:
         srcDomainp(sensenodep);
         dstDomainp(sensenodep);
     }
-    virtual ~CdcLogicVertex() override = default;
+    ~CdcLogicVertex() override = default;
     // ACCESSORS
-    virtual string name() const override {
-        return (cvtToHex(nodep()) + "@" + scopep()->prettyName());
-    }
-    virtual string dotColor() const override { return hazard() ? "black" : "yellow"; }
+    string name() const override { return (cvtToHex(nodep()) + "@" + scopep()->prettyName()); }
+    string dotColor() const override { return hazard() ? "black" : "yellow"; }
     bool hazard() const { return m_hazard; }
     void setHazard(AstNode* nodep) {
         m_hazard = true;
@@ -143,7 +143,7 @@ private:
     std::ofstream* const m_ofp = nullptr;  // Output file
     string m_prefix;
 
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         *m_ofp << m_prefix;
         if (nodep->user3()) {
             *m_ofp << " %%";
@@ -170,17 +170,17 @@ public:
         , m_prefix{prefix} {
         iterate(nodep);
     }
-    virtual ~CdcDumpVisitor() override = default;
+    ~CdcDumpVisitor() override = default;
 };
 
 //######################################################################
 
 class CdcWidthVisitor final : public CdcBaseVisitor {
 private:
-    int m_maxLineno = 0;
     size_t m_maxFilenameLen = 0;
+    int m_maxLineno = 0;
 
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         iterateChildren(nodep);
         // Keeping line+filename lengths separate is much faster than calling ascii().length()
         if (nodep->fileline()->lineno() >= m_maxLineno) {
@@ -194,7 +194,7 @@ private:
 public:
     // CONSTRUCTORS
     explicit CdcWidthVisitor(AstNode* nodep) { iterate(nodep); }
-    virtual ~CdcWidthVisitor() override = default;
+    ~CdcWidthVisitor() override = default;
     // ACCESSORS
     int maxWidth() const {
         size_t width = 1;
@@ -237,8 +237,9 @@ private:
     // METHODS
     void iterateNewStmt(AstNode* nodep) {
         if (m_scopep) {
+            VL_RESTORER(m_logicVertexp);
             UINFO(4, "   STMT " << nodep << endl);
-            m_logicVertexp = new CdcLogicVertex(&m_graph, m_scopep, nodep, m_domainp);
+            m_logicVertexp = new CdcLogicVertex{&m_graph, m_scopep, nodep, m_domainp};
             if (m_domainp && m_domainp->hasClocked()) {  // To/from a flop
                 m_logicVertexp->isFlop(true);
                 m_logicVertexp->srcDomainp(m_domainp);
@@ -247,11 +248,10 @@ private:
                 m_logicVertexp->dstDomainSet(true);
             }
             iterateChildren(nodep);
-            m_logicVertexp = nullptr;
 
             if (false && debug() >= 9) {
                 UINFO(9, "Trace Logic:\n");
-                nodep->dumpTree(cout, "-log1: ");
+                nodep->dumpTree("-  log1: ");
             }
         }
     }
@@ -260,18 +260,18 @@ private:
         CdcVarVertex* vertexp = reinterpret_cast<CdcVarVertex*>(varscp->user1p());
         if (!vertexp) {
             UINFO(6, "New vertex " << varscp << endl);
-            vertexp = new CdcVarVertex(&m_graph, m_scopep, varscp);
+            vertexp = new CdcVarVertex{&m_graph, m_scopep, varscp};
             varscp->user1p(vertexp);
             if (varscp->varp()->isUsedClock()) {}
             if (varscp->varp()->isPrimaryIO()) {
                 // Create IO vertex - note it's relative to the pointed to var, not where we are
                 // now This allows reporting to easily print the input statement
                 CdcLogicVertex* const ioVertexp
-                    = new CdcLogicVertex(&m_graph, varscp->scopep(), varscp->varp(), nullptr);
+                    = new CdcLogicVertex{&m_graph, varscp->scopep(), varscp->varp(), nullptr};
                 if (varscp->varp()->isWritable()) {
-                    new V3GraphEdge(&m_graph, vertexp, ioVertexp, 1);
+                    new V3GraphEdge{&m_graph, vertexp, ioVertexp, 1};
                 } else {
-                    new V3GraphEdge(&m_graph, ioVertexp, vertexp, 1);
+                    new V3GraphEdge{&m_graph, ioVertexp, vertexp, 1};
                 }
             }
         }
@@ -324,13 +324,11 @@ private:
 
     void analyze() {
         UINFO(3, __FUNCTION__ << ": " << endl);
-        // if (debug() > 6) m_graph.dump();
-        if (debug() > 6) m_graph.dumpDotFilePrefixed("cdc_pre");
+        if (dumpGraph() > 6) m_graph.dumpDotFilePrefixed("cdc_pre");
+        // This will MAX across edge weights
+        m_graph.removeRedundantEdges(&V3GraphEdge::followAlwaysTrue);
         //
-        m_graph.removeRedundantEdges(
-            &V3GraphEdge::followAlwaysTrue);  // This will MAX across edge weights
-        //
-        m_graph.dumpDotFilePrefixed("cdc_simp");
+        if (dumpGraph() >= 3) m_graph.dumpDotFilePrefixed("cdc_simp");
         //
         analyzeReset();
     }
@@ -468,7 +466,7 @@ private:
         } else {
             V3EmitV::verilogPrefixedTree(nodep, *m_ofp, prefix + " +- ", filelineWidth(),
                                          vertexp->srcDomainp(), true);
-            if (debug()) { CdcDumpVisitor visitor(nodep, m_ofp, front + "DBG: "); }
+            if (debug()) { CdcDumpVisitor{nodep, m_ofp, front + "DBG: "}; }
         }
 
         nextsep = " | ";
@@ -560,14 +558,13 @@ private:
         }  // Fully computed
 
         std::set<AstSenTree*> senouts;  // List of all sensitivities for new signal
-        if (const CdcLogicVertex* const vvertexp = dynamic_cast<CdcLogicVertex*>(vertexp)) {
-            if (vvertexp) {}  // Unused
+        if (dynamic_cast<CdcLogicVertex*>(vertexp)) {
         } else if (const CdcVarVertex* const vvertexp = dynamic_cast<CdcVarVertex*>(vertexp)) {
             // If primary I/O, give it domain of the input
             const AstVar* const varp = vvertexp->varScp()->varp();
             if (varp->isPrimaryIO() && varp->isNonOutput() && !traceDests) {
-                senouts.insert(new AstSenTree(
-                    varp->fileline(), new AstSenItem(varp->fileline(), AstSenItem::Combo())));
+                senouts.insert(new AstSenTree{
+                    varp->fileline(), new AstSenItem{varp->fileline(), AstSenItem::Combo{}}});
             }
         }
 
@@ -627,33 +624,33 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modp);
         {
             m_modp = nodep;
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstScope* nodep) override {
+    void visit(AstScope* nodep) override {
         UINFO(4, " SCOPE " << nodep << endl);
         m_scopep = nodep;
         m_logicVertexp = nullptr;
         iterateChildren(nodep);
         m_scopep = nullptr;
     }
-    virtual void visit(AstActive* nodep) override {
+    void visit(AstActive* nodep) override {
         // Create required blocks and add to module
         UINFO(4, "  BLOCK  " << nodep << endl);
         AstNode::user2ClearTree();
         m_domainp = nodep->sensesp();
-        if (!m_domainp || m_domainp->hasCombo()
-            || m_domainp->hasClocked()) {  // IE not hasSettle/hasInitial
+        // Ignore static initializers, initial and final blocks
+        if (!m_domainp || m_domainp->hasCombo() || m_domainp->hasClocked()) {
             iterateNewStmt(nodep);
         }
         m_domainp = nullptr;
         AstNode::user2ClearTree();
     }
-    virtual void visit(AstNodeVarRef* nodep) override {
+    void visit(AstNodeVarRef* nodep) override {
         if (m_scopep) {
             UASSERT_OBJ(m_logicVertexp, nodep, "Var ref not under a logic block");
             AstVarScope* const varscp = nodep->varScopep();
@@ -664,7 +661,7 @@ private:
             // Weight of CDC_WEIGHT_ASYNC to indicate feeds async (for reporting)
             // When simplify we'll take the MAX weight
             if (nodep->access().isWriteOrRW()) {
-                new V3GraphEdge(&m_graph, m_logicVertexp, varvertexp, 1);
+                new V3GraphEdge{&m_graph, m_logicVertexp, varvertexp, 1};
                 if (m_inDly) {
                     varvertexp->fromFlop(true);
                     varvertexp->srcDomainp(m_domainp);
@@ -673,61 +670,62 @@ private:
             } else {
                 if (varvertexp->cntAsyncRst()) {
                     // UINFO(9," edgeasync "<<varvertexp->name()<<" to "<<m_logicVertexp<<endl);
-                    new V3GraphEdge(&m_graph, varvertexp, m_logicVertexp, CDC_WEIGHT_ASYNC);
+                    new V3GraphEdge{&m_graph, varvertexp, m_logicVertexp, CDC_WEIGHT_ASYNC};
                 } else {
                     // UINFO(9," edgena    "<<varvertexp->name()<<" to "<<m_logicVertexp<<endl);
-                    new V3GraphEdge(&m_graph, varvertexp, m_logicVertexp, 1);
+                    new V3GraphEdge{&m_graph, varvertexp, m_logicVertexp, 1};
                 }
             }
         }
     }
-    virtual void visit(AstAssignDly* nodep) override {
+    void visit(AstAssignDly* nodep) override {
+        VL_RESTORER(m_inDly);
         m_inDly = true;
         iterateChildren(nodep);
         m_inDly = false;
     }
-    virtual void visit(AstSenItem* nodep) override {
+    void visit(AstSenItem* nodep) override {
         m_inSenItem = true;
         iterateChildren(nodep);
         m_inSenItem = false;
     }
-    virtual void visit(AstAlways* nodep) override { iterateNewStmt(nodep); }
-    virtual void visit(AstAlwaysPublic* nodep) override {
+    void visit(AstAlways* nodep) override { iterateNewStmt(nodep); }
+    void visit(AstAlwaysPublic* nodep) override {
         // CDC doesn't care about public variables
     }
-    virtual void visit(AstCFunc* nodep) override { iterateNewStmt(nodep); }
-    virtual void visit(AstAssignAlias* nodep) override { iterateNewStmt(nodep); }
-    virtual void visit(AstAssignW* nodep) override { iterateNewStmt(nodep); }
+    void visit(AstCFunc* nodep) override { iterateNewStmt(nodep); }
+    void visit(AstAssignAlias* nodep) override { iterateNewStmt(nodep); }
+    void visit(AstAssignW* nodep) override { iterateNewStmt(nodep); }
 
-    // Math that shouldn't cause us to clear hazard
-    virtual void visit(AstConst*) override {}
-    virtual void visit(AstReplicate* nodep) override { iterateChildren(nodep); }
-    virtual void visit(AstConcat* nodep) override { iterateChildren(nodep); }
-    virtual void visit(AstNot* nodep) override { iterateChildren(nodep); }
-    virtual void visit(AstSel* nodep) override {
+    // Expressions that shouldn't cause us to clear hazard
+    void visit(AstConst*) override {}
+    void visit(AstReplicate* nodep) override { iterateChildren(nodep); }
+    void visit(AstConcat* nodep) override { iterateChildren(nodep); }
+    void visit(AstNot* nodep) override { iterateChildren(nodep); }
+    void visit(AstSel* nodep) override {
         if (!VN_IS(nodep->lsbp(), Const)) setNodeHazard(nodep);
         iterateChildren(nodep);
     }
-    virtual void visit(AstNodeSel* nodep) override {
+    void visit(AstNodeSel* nodep) override {
         if (!VN_IS(nodep->bitp(), Const)) setNodeHazard(nodep);
         iterateChildren(nodep);
     }
 
     // Ignores
-    virtual void visit(AstInitial*) override {}
-    virtual void visit(AstInitialAutomatic*) override {}
-    virtual void visit(AstInitialStatic*) override {}
-    virtual void visit(AstTraceDecl*) override {}
-    virtual void visit(AstCoverToggle*) override {}
-    virtual void visit(AstNodeDType*) override {}
+    void visit(AstInitial*) override {}
+    void visit(AstInitialAutomatic*) override {}
+    void visit(AstInitialStatic*) override {}
+    void visit(AstTraceDecl*) override {}
+    void visit(AstCoverToggle*) override {}
+    void visit(AstNodeDType*) override {}
 
     //--------------------
     // Default
-    virtual void visit(AstNodeMath* nodep) override {
+    void visit(AstNodeExpr* nodep) override {
         setNodeHazard(nodep);
         iterateChildren(nodep);
     }
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
@@ -753,7 +751,7 @@ public:
             *m_ofp << '\n';
         }
     }
-    virtual ~CdcVisitor() override {
+    ~CdcVisitor() override {
         if (m_ofp) VL_DO_CLEAR(delete m_ofp, m_ofp = nullptr);
     }
 };

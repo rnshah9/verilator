@@ -23,6 +23,7 @@
 #define VERILATOR_VERILATED_PROFILER_H_
 
 #include "verilatedos.h"
+
 #include "verilated.h"
 
 #include <array>
@@ -44,8 +45,7 @@ class VlThreadPool;
 
 //=============================================================================
 // Return high-precision counter for profiling, or 0x0 if not available
-VL_ATTR_ALWINLINE
-inline QData VL_CPU_TICK() {
+VL_ATTR_ALWINLINE QData VL_CPU_TICK() {
     uint64_t val;
     VL_GET_CPU_TICK(val);
     return val;
@@ -151,7 +151,7 @@ class VlExecutionProfiler final : public VerilatedVirtualBase {
 
     // STATE
     VerilatedContext& m_context;  // The context this profiler is under
-    static VL_THREAD_LOCAL ExecutionTrace t_trace;  // thread-local trace buffers
+    static thread_local ExecutionTrace t_trace;  // thread-local trace buffers
     mutable VerilatedMutex m_mutex;
     // Map from thread id to &t_trace of given thread
     std::map<uint32_t, ExecutionTrace*> m_traceps VL_GUARDED_BY(m_mutex);
@@ -170,9 +170,9 @@ public:
     // METHODS
 
     // Is profiling enabled
-    inline bool enabled() const { return m_enabled; }
+    bool enabled() const { return m_enabled; }
     // Append a trace record to the trace buffer of the current thread
-    static inline VlExecutionRecord& addRecord() {
+    static VlExecutionRecord& addRecord() {
         t_trace.emplace_back();
         return t_trace.back();
     }
@@ -192,7 +192,8 @@ public:
 //=============================================================================
 // VlPgoProfiler is for collecting profiling data for PGO
 
-template <std::size_t T_Entries> class VlPgoProfiler final {
+template <std::size_t T_Entries>
+class VlPgoProfiler final {
     // TYPES
     struct Record final {
         const std::string m_name;  // Hashed name of mtask/etc

@@ -23,8 +23,8 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Error.h"
 #include "V3Ast.h"
+#include "V3Error.h"
 #include "V3Hasher.h"
 
 #include <map>
@@ -59,7 +59,6 @@ public:
     }
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     // Expose minimal set of superclass interface
     using Super::begin;

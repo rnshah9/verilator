@@ -41,10 +41,8 @@
 #include <string>
 #include <utility>
 #include <vector>
-#ifdef VL_THREADED
-# include <functional>
-# include <queue>
-#endif
+#include <functional>
+#include <queue>
 // clang-format on
 
 class VerilatedScope;
@@ -52,7 +50,6 @@ class VerilatedScope;
 //======================================================================
 // Threaded message passing
 
-#ifdef VL_THREADED
 // Message, enqueued on an mtask, and consumed on the main eval thread
 class VerilatedMsg final {
 public:
@@ -152,7 +149,7 @@ private:
     VL_UNCOPYABLE(VerilatedThreadMsgQueue);
     // METHODS
     static VerilatedThreadMsgQueue& threadton() {
-        static VL_THREAD_LOCAL VerilatedThreadMsgQueue t_s;
+        static thread_local VerilatedThreadMsgQueue t_s;
         return t_s;
     }
 
@@ -178,7 +175,6 @@ public:
         }
     }
 };
-#endif  // VL_THREADED
 
 // FILE* list constructed from a file-descriptor
 class VerilatedFpList final {
@@ -230,7 +226,7 @@ class VerilatedContextImp final : VerilatedContext {
         // Number incrementing on each reseed, 0=illegal
         int s_randSeedEpoch = 1;  // Reads ok, wish had a VL_WRITE_GUARDED_BY(s_randMutex)
     };
-    static Statics& s() {
+    static Statics& s() VL_MT_SAFE {
         static Statics s_s;
         return s_s;
     }
@@ -356,7 +352,7 @@ public:  // But only for verilated*.cpp
             }
         }
     }
-    inline FILE* fdToFp(IData fdi) VL_MT_SAFE_EXCLUDES(m_fdMutex) {
+    FILE* fdToFp(IData fdi) VL_MT_SAFE_EXCLUDES(m_fdMutex) {
         const VerilatedLockGuard lock{m_fdMutex};
         const VerilatedFpList fdlist = fdToFpList(fdi);
         if (VL_UNLIKELY(fdlist.size() != 1)) return nullptr;
@@ -366,6 +362,7 @@ public:  // But only for verilated*.cpp
 private:
     VerilatedFpList fdToFpList(IData fdi) VL_REQUIRES(m_fdMutex) {
         VerilatedFpList fp;
+        // cppverilator-suppress integerOverflow shiftTooManyBitsSigned
         if ((fdi & (1 << 31)) != 0) {
             // Non-MCD case
             const IData idx = fdi & VL_MASK_I(31);
@@ -444,7 +441,7 @@ protected:
     friend class Verilated;
 
     // MEMBERS
-    static VerilatedImpData& s() {  // Singleton
+    static VerilatedImpData& s() VL_MT_SAFE {  // Singleton
         static VerilatedImpData s_s;
         return s_s;
     }
@@ -466,7 +463,7 @@ public:
     // There's often many more scopes than userdata's and thus having a ~48byte
     // per map overhead * N scopes would take much more space and cache thrashing.
     // As scopep's are pointers, this implicitly handles multiple Context's
-    static inline void userInsert(const void* scopep, void* userKey, void* userData) VL_MT_SAFE {
+    static void userInsert(const void* scopep, void* userKey, void* userData) VL_MT_SAFE {
         const VerilatedLockGuard lock{s().m_userMapMutex};
         const auto it = s().m_userMap.find(std::make_pair(scopep, userKey));
         if (it != s().m_userMap.end()) {
@@ -475,7 +472,7 @@ public:
             s().m_userMap.emplace(std::make_pair(scopep, userKey), userData);
         }
     }
-    static inline void* userFind(const void* scopep, void* userKey) VL_MT_SAFE {
+    static void* userFind(const void* scopep, void* userKey) VL_MT_SAFE {
         const VerilatedLockGuard lock{s().m_userMapMutex};
         const auto& it = vlstd::as_const(s().m_userMap).find(std::make_pair(scopep, userKey));
         if (VL_UNLIKELY(it == s().m_userMap.end())) return nullptr;

@@ -17,19 +17,21 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
+#include "V3EmitMk.h"
+
+#include "V3EmitCBase.h"
 #include "V3Global.h"
 #include "V3HierBlock.h"
 #include "V3Os.h"
-#include "V3EmitMk.h"
-#include "V3EmitCBase.h"
 
-//######################################################################
-// Emit statements and math operators
+VL_DEFINE_DEBUG_FUNCTIONS;
+
+// ######################################################################
+//  Emit statements and expressions
 
 class EmitMk final {
 public:
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void putMakeClassEntry(V3OutMkFile& of, const string& name) {
         of.puts("\t" + V3Os::filenameNonDirExt(name) + " \\\n");
@@ -37,7 +39,7 @@ public:
 
     void emitClassMake() {
         // Generate the makefile
-        V3OutMkFile of(v3Global.opt.makeDir() + "/" + v3Global.opt.prefix() + "_classes.mk");
+        V3OutMkFile of{v3Global.opt.makeDir() + "/" + v3Global.opt.prefix() + "_classes.mk"};
         of.putsHeader();
         of.puts("# DESCR"
                 "IPTION: Verilator output: Make include file with class lists\n");
@@ -49,6 +51,10 @@ public:
         of.puts("\n### Switches...\n");
         of.puts("# C11 constructs required?  0/1 (always on now)\n");
         of.puts("VM_C11 = 1\n");
+        of.puts("# Timing enabled?  0/1\n");
+        of.puts("VM_TIMING = ");
+        of.puts(v3Global.usesTiming() ? "1" : "0");
+        of.puts("\n");
         of.puts("# Coverage output mode?  0/1 (from --coverage)\n");
         of.puts("VM_COVERAGE = ");
         of.puts(v3Global.opt.coverage() ? "1" : "0");
@@ -56,10 +62,6 @@ public:
         of.puts("# Parallel builds?  0/1 (from --output-split)\n");
         of.puts("VM_PARALLEL_BUILDS = ");
         of.puts(v3Global.useParallelBuild() ? "1" : "0");
-        of.puts("\n");
-        of.puts("# Threaded output mode?  0/1/N threads (from --threads)\n");
-        of.puts("VM_THREADS = ");
-        of.puts(cvtToStr(v3Global.opt.threads()));
         of.puts("\n");
         of.puts("# Tracing output mode?  0/1 (from --trace/--trace-fst)\n");
         of.puts("VM_TRACE = ");
@@ -103,10 +105,9 @@ public:
                     if (v3Global.opt.coverage()) putMakeClassEntry(of, "verilated_cov.cpp");
                     if (v3Global.opt.trace()) {
                         putMakeClassEntry(of, v3Global.opt.traceSourceBase() + "_c.cpp");
-                        if (v3Global.opt.systemC()) {
-                            putMakeClassEntry(of, v3Global.opt.traceSourceLang() + ".cpp");
-                        }
                     }
+                    if (v3Global.usesProbDist()) putMakeClassEntry(of, "verilated_probdist.cpp");
+                    if (v3Global.usesTiming()) putMakeClassEntry(of, "verilated_timing.cpp");
                     if (v3Global.opt.threads()) putMakeClassEntry(of, "verilated_threads.cpp");
                     if (v3Global.opt.usesProfiler()) {
                         putMakeClassEntry(of, "verilated_profiler.cpp");
@@ -132,7 +133,7 @@ public:
 
     void emitOverallMake() {
         // Generate the makefile
-        V3OutMkFile of(v3Global.opt.makeDir() + "/" + v3Global.opt.prefix() + ".mk");
+        V3OutMkFile of{v3Global.opt.makeDir() + "/" + v3Global.opt.prefix() + ".mk"};
         of.putsHeader();
         of.puts("# DESCR"
                 "IPTION: Verilator output: "
@@ -228,13 +229,16 @@ public:
             of.puts("\n### Executable rules... (from --exe)\n");
             of.puts("VPATH += $(VM_USER_DIR)\n");
             of.puts("\n");
-            for (const string& cppfile : cppFiles) {
-                const string basename = V3Os::filenameNonExt(cppfile);
-                // NOLINTNEXTLINE(performance-inefficient-string-concatenation)
-                of.puts(basename + ".o: " + cppfile + "\n");
-                of.puts("\t$(OBJCACHE) $(CXX) $(CXXFLAGS) $(CPPFLAGS) $(OPT_FAST) -c -o $@ $<\n");
-            }
+        }
 
+        for (const string& cppfile : cppFiles) {
+            const string basename = V3Os::filenameNonExt(cppfile);
+            // NOLINTNEXTLINE(performance-inefficient-string-concatenation)
+            of.puts(basename + ".o: " + cppfile + "\n");
+            of.puts("\t$(OBJCACHE) $(CXX) $(CXXFLAGS) $(CPPFLAGS) $(OPT_FAST) -c -o $@ $<\n");
+        }
+
+        if (v3Global.opt.exe()) {
             of.puts("\n### Link rules... (from --exe)\n");
             of.puts(v3Global.opt.exeName()
                     + ": $(VK_USER_OBJS) $(VK_GLOBAL_OBJS) $(VM_PREFIX)__ALL.a $(VM_HIER_LIBS)\n");
@@ -291,7 +295,7 @@ class EmitMkHierVerilation final {
         of.puts("# Verilation of hierarchical blocks are executed in this directory\n");
         of.puts("VM_HIER_RUN_DIR := " + cwd + "\n");
         of.puts("# Common options for hierarchical blocks\n");
-        const string fullpath_bin = V3Os::filenameRealPath(v3Global.opt.bin());
+        const string fullpath_bin = V3Os::filenameRealPath(v3Global.opt.buildDepBin());
         const string verilator_wrapper = V3Os::filenameDir(fullpath_bin) + "/verilator";
         of.puts("VM_HIER_VERILATOR := " + verilator_wrapper + "\n");
         of.puts("VM_HIER_INPUT_FILES := \\\n");
@@ -395,10 +399,9 @@ public:
     explicit EmitMkHierVerilation(const V3HierBlockPlan* planp)
         : m_planp{planp}
         , m_makefile{v3Global.opt.makeDir() + "/" + v3Global.opt.prefix() + "_hier.mk"} {
-        V3OutMkFile of(m_makefile);
+        V3OutMkFile of{m_makefile};
         emit(of);
     }
-    VL_DEBUG_FUNC;  // Declare debug()
 };
 
 //######################################################################

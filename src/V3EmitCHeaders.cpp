@@ -17,19 +17,20 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3EmitC.h"
 #include "V3EmitCConstInit.h"
+#include "V3Global.h"
 
 #include <algorithm>
 #include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Internal EmitC implementation
 
 class EmitCHeader final : public EmitCConstInit {
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void decorateFirst(bool& first, const string& str) {
         if (first) {
@@ -255,9 +256,11 @@ class EmitCHeader final : public EmitCConstInit {
         puts("\nclass ");
         puts(prefixNameProtect(modp));
         if (const AstClass* const classp = VN_CAST(modp, Class)) {
+            puts(" : public ");
             if (classp->extendsp()) {
-                puts(" : public ");
                 puts(prefixNameProtect(classp->extendsp()->classp()));
+            } else {
+                puts("VlClass");
             }
         } else {
             puts(" final : public VerilatedModule");
@@ -298,7 +301,7 @@ class EmitCHeader final : public EmitCConstInit {
         // Open output file
         const string filename = v3Global.opt.makeDir() + "/" + prefixNameProtect(modp) + ".h";
         newCFile(filename, /* slow: */ false, /* source: */ false);
-        m_ofp = v3Global.opt.systemC() ? new V3OutScFile(filename) : new V3OutCFile(filename);
+        m_ofp = v3Global.opt.systemC() ? new V3OutScFile{filename} : new V3OutCFile{filename};
 
         ofp()->putsHeader();
         puts("// DESCRIPTION: Verilator output: Design internal header\n");
@@ -313,6 +316,7 @@ class EmitCHeader final : public EmitCConstInit {
         if (v3Global.opt.mtasks()) puts("#include \"verilated_threads.h\"\n");
         if (v3Global.opt.savable()) puts("#include \"verilated_save.h\"\n");
         if (v3Global.opt.coverage()) puts("#include \"verilated_cov.h\"\n");
+        if (v3Global.usesTiming()) puts("#include \"verilated_timing.h\"\n");
 
         emitAll(modp);
 
@@ -326,10 +330,10 @@ class EmitCHeader final : public EmitCConstInit {
         // Close output file
         VL_DO_CLEAR(delete m_ofp, m_ofp = nullptr);
     }
-    virtual ~EmitCHeader() override = default;
+    ~EmitCHeader() override = default;
 
 public:
-    static void main(const AstNodeModule* modp) { EmitCHeader emitCHeader(modp); }
+    static void main(const AstNodeModule* modp) { EmitCHeader emitCHeader{modp}; }
 };
 
 //######################################################################

@@ -25,6 +25,12 @@ or "`ifdef`"'s may break other tools.
 
    This will report an error when encountered, like C++'s #error.
 
+.. option:: """ [string] """
+
+   A triple-quoted block specifies a string which may include newlines and
+   single quotes.  This extension is experimental and may be removed
+   without deprecation.
+
 .. option:: $c([string], ...);
 
    The string will be embedded directly in the output C++ code at the point
@@ -72,6 +78,16 @@ or "`ifdef`"'s may break other tools.
    prints a number with minimum width.  Verilator extends this so %5x
    prints 5 digits per the C standard (this is unspecified in Verilog, but
    was incorporated into the 1800-2009).
+
+.. option:: $timeprecision
+
+   Returns the timeprecision of the model as an integer.  This extension is
+   experimental and may be removed without deprecation.
+
+.. option:: $timeunit
+
+   Returns the timeunit of the current module as an integer.  This
+   extension is experimental and may be removed without deprecation.
 
 .. option:: `coverage_block_off
 
@@ -151,6 +167,13 @@ or "`ifdef`"'s may break other tools.
    Take remaining text up to the next :option:`\`verilog` mode switch and
    treat it as Verilator configuration commands.  See :ref:`Configuration Files`.
 
+.. option:: `VERILATOR_TIMING
+
+   The VERILATOR_TIMING define is set when :vlopt:`--timing` is used to
+   allow an "\`ifdef" of code dependent on this feature.  Note this define
+   is not affected by the :option:`timing_off` configuration file option
+   nor timing metacomments.
+
 .. option:: `verilog
 
    Switch back to processing Verilog code after a
@@ -159,6 +182,10 @@ or "`ifdef`"'s may break other tools.
    "\`begin_keywords", or SystemVerilog if none was specified.
 
 .. option:: /*verilator&32;clock_enable*/
+
+   Deprecated and has no effect (ignored).
+
+   In versions prior to 5.000:
 
    Used after a signal declaration to indicate the signal is used to gate a
    clock, and the user takes responsibility for insuring there are no races
@@ -174,9 +201,7 @@ or "`ifdef`"'s may break other tools.
 
    The clock_enable attribute will cause the clock gate to be ignored in
    the scheduling algorithm, sometimes required for correct clock behavior,
-   and always improving performance.  It's also a good idea to enable the
-   :option:`IMPERFECTSCH` warning, to ensure all clock enables are properly
-   recognized.
+   and always improving performance.
 
    Same as :option:`clock_enable` configuration file option.
 
@@ -184,9 +209,7 @@ or "`ifdef`"'s may break other tools.
 
 .. option:: /*verilator&32;no_clocker*/
 
-   Specifies that the signal is used as clock or not. This information is
-   used by Verilator to mark the signal and any derived signals as
-   clocker.  See :vlopt:`--clk`.
+   Specifies that the signal is used as clock or not. See :vlopt:`--clk`.
 
    Same as :option:`clocker` and :option:`no_clocker` in configuration
    files.
@@ -503,6 +526,22 @@ or "`ifdef`"'s may break other tools.
    Verilator) text that should be passed through to the XML output as a tag,
    for use by downstream applications.
 
+.. option:: /*verilator&32;timing_off*/
+
+   Ignore all timing constructs after this metacomment. All timing controls
+   behave as if they were not there (the same way as with
+   :option:`--no-timing`), and :code:`fork`/:code:`join*` blocks are
+   converted into :code:`begin`/:code:`end` blocks.
+
+   Same as :option:`timing_off` configuration file option.
+
+.. option:: /*verilator&32;timing_on*/
+
+   Re-enable all timing constructs after this metacomment (only applicable
+   after :option:`timing_off`).
+
+   Same as :option:`timing_on` configuration file option.
+
 .. option:: /*verilator&32;trace_init_task*/
 
    Attached to a DPI import to indicate that function should be called when
@@ -521,3 +560,14 @@ or "`ifdef`"'s may break other tools.
 
    Re-enable waveform tracing for all future signals or instances that are
    declared.
+
+.. option:: $stacktrace
+
+   Called as a task, orint a stack trace.  Called as a function, return a
+   string with a stack trace.  This relies on the C++ system trace, which
+   may give less meaningful results if the model was not compiled with
+   debug symbols.  Also the data represents the C++ stack, the
+   SystemVerilog functions/tasks involved may be renamed and/or inlined
+   before becoming the C++ functions that may be visible in the stack
+   trace.  This extension is experimental and may be removed without
+   deprecation.

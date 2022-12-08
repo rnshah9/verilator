@@ -26,12 +26,15 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Depth.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 #include "V3UniqueNames.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 
@@ -48,11 +51,10 @@ private:
     V3UniqueNames m_tempNames;  // For generating unique temporary variable names
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
-    void createDeepTemp(AstNode* nodep) {
+    void createDeepTemp(AstNodeExpr* nodep) {
         UINFO(6, "  Deep  " << nodep << endl);
-        // if (debug() >= 9) nodep->dumpTree(cout, "deep:");
+        // if (debug() >= 9) nodep->dumpTree("-  deep: ");
         AstVar* const varp = new AstVar{nodep->fileline(), VVarType::STMTTEMP,
                                         m_tempNames.get(nodep), nodep->dtypep()};
         if (m_cfuncp) {
@@ -72,7 +74,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         VL_RESTORER(m_cfuncp);
         VL_RESTORER(m_mtaskbodyp);
         {
@@ -84,7 +86,7 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstMTaskBody* nodep) override {
+    void visit(AstMTaskBody* nodep) override {
         VL_RESTORER(m_cfuncp);
         VL_RESTORER(m_mtaskbodyp);
         {
@@ -105,16 +107,10 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstNodeStmt* nodep) override {
-        if (!nodep->isStatement()) {
-            iterateChildren(nodep);
-        } else {
-            visitStmt(nodep);
-        }
-    }
+    void visit(AstNodeStmt* nodep) override { visitStmt(nodep); }
     // Operators
-    virtual void visit(AstNodeTermop* nodep) override {}
-    virtual void visit(AstNodeMath* nodep) override {
+    void visit(AstNodeTermop* nodep) override {}
+    void visit(AstNodeExpr* nodep) override {
         // We have some operator defines that use 2 parens, so += 2.
         {
             VL_RESTORER(m_depth);
@@ -141,19 +137,19 @@ private:
             m_cfuncp->isStatic(false);
         }
     }
-    virtual void visit(AstUCFunc* nodep) override {
+    void visit(AstUCFunc* nodep) override {
         needNonStaticFunc(nodep);
         iterateChildren(nodep);
     }
-    virtual void visit(AstUCStmt* nodep) override {
+    void visit(AstUCStmt* nodep) override {
         needNonStaticFunc(nodep);
         visitStmt(nodep);
     }
 
     //--------------------
     // Default: Just iterate
-    virtual void visit(AstVar*) override {}  // Don't hit varrefs under vars
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Don't hit varrefs under vars
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
@@ -161,7 +157,7 @@ public:
         : m_tempNames{"__Vdeeptemp"} {
         iterate(nodep);
     }
-    virtual ~DepthVisitor() override = default;
+    ~DepthVisitor() override = default;
 };
 
 //######################################################################
@@ -170,5 +166,5 @@ public:
 void V3Depth::depthAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { DepthVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("depth", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 6);
+    V3Global::dumpCheckGlobalTree("depth", 0, dumpTree() >= 6);
 }

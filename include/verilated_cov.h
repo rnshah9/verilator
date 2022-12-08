@@ -26,6 +26,7 @@
 #define VERILATOR_VERILATED_COV_H_
 
 #include "verilatedos.h"
+
 #include "verilated.h"
 
 #include <iostream>
@@ -33,22 +34,6 @@
 #include <string>
 
 class VerilatedCovImp;
-
-//=============================================================================
-/// Conditionally compile statements only when doing coverage (when
-/// VM_COVERAGE is defined)
-
-// clang-format off
-#ifdef VM_COVERAGE
-# define VL_IF_COVER(stmts) \
-    do { stmts; } while (false)
-#else
-# define VL_IF_COVER(stmts) \
-    do { \
-        if (false) { stmts; } \
-    } while (false)
-#endif
-// clang-format on
 
 //=============================================================================
 /// Insert a item for coverage analysis.
@@ -82,13 +67,17 @@ class VerilatedCovImp;
 ///     }
 
 #define VL_COVER_INSERT(covcontextp, countp, ...) \
-    VL_IF_COVER(covcontextp->_inserti(countp); covcontextp->_insertf(__FILE__, __LINE__); \
-                covcontextp->_insertp("hier", name(), __VA_ARGS__))
+    do { \
+        covcontextp->_inserti(countp); \
+        covcontextp->_insertf(__FILE__, __LINE__); \
+        covcontextp->_insertp("hier", name(), __VA_ARGS__); \
+    } while (false)
 
 //=============================================================================
 // Convert VL_COVER_INSERT value arguments to strings, is \internal
 
-template <class T> std::string vlCovCvtToStr(const T& t) VL_PURE {
+template <class T>
+std::string vlCovCvtToStr(const T& t) VL_PURE {
     std::ostringstream os;
     os << t;
     return os.str();
@@ -163,7 +152,7 @@ protected:
 
     // METHODS
     // Internal: access to implementation class
-    VerilatedCovImp* impp() { return reinterpret_cast<VerilatedCovImp*>(this); }
+    VerilatedCovImp* impp() VL_MT_SAFE { return reinterpret_cast<VerilatedCovImp*>(this); }
 };
 
 //=============================================================================

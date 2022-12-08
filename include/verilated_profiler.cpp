@@ -17,11 +17,10 @@
 //=============================================================================
 
 #include "verilatedos.h"
+
 #include "verilated_profiler.h"
 
-#if VL_THREADED
 #include "verilated_threads.h"
-#endif
 
 #include <fstream>
 #include <string>
@@ -31,7 +30,7 @@
 
 // Internal note: Globals may multi-construct, see verilated.cpp top.
 
-VL_THREAD_LOCAL VlExecutionProfiler::ExecutionTrace VlExecutionProfiler::t_trace;
+thread_local VlExecutionProfiler::ExecutionTrace VlExecutionProfiler::t_trace;
 
 constexpr const char* const VlExecutionRecord::s_ascii[];
 
@@ -60,7 +59,8 @@ uint16_t VlExecutionRecord::getcpu() {
 //=============================================================================
 // VlExecutionProfiler implementation
 
-template <size_t N> static size_t roundUptoMultipleOf(size_t value) {
+template <size_t N>
+static size_t roundUptoMultipleOf(size_t value) {
     static_assert((N & (N - 1)) == 0, "'N' must be a power of 2");
     size_t mask = N - 1;
     return (value + mask) & ~mask;
@@ -103,7 +103,6 @@ void VlExecutionProfiler::configure() {
 
 VerilatedVirtualBase* VlExecutionProfiler::construct(VerilatedContext& context) {
     VlExecutionProfiler* const selfp = new VlExecutionProfiler{context};
-#if VL_THREADED
     if (VlThreadPool* const threadPoolp = static_cast<VlThreadPool*>(context.threadPoolp())) {
         for (int i = 0; i < threadPoolp->numThreads(); ++i) {
             // Data to pass to worker thread initialization
@@ -120,11 +119,10 @@ VerilatedVirtualBase* VlExecutionProfiler::construct(VerilatedContext& context) 
                 },
                 &data);
 
-            // Wait until initializationis complete
+            // Wait until initialization is complete
             threadPoolp->workerp(i)->wait();
         }
     }
-#endif
     return selfp;
 }
 
@@ -170,14 +168,12 @@ void VlExecutionProfiler::dump(const char* filenamep, uint64_t tickEnd)
             Verilated::threadContextp()->profExecWindow());
     const unsigned threads = static_cast<unsigned>(m_traceps.size());
     fprintf(fp, "VLPROF stat threads %u\n", threads);
-#ifdef VL_THREADED
     fprintf(fp, "VLPROF stat yields %" PRIu64 "\n", VlMTaskVertex::yields());
-#endif
 
     // Copy /proc/cpuinfo into this output so verilator_gantt can be run on
     // a different machine
     {
-        const std::unique_ptr<std::ifstream> ifp{new std::ifstream("/proc/cpuinfo")};
+        const std::unique_ptr<std::ifstream> ifp{new std::ifstream{"/proc/cpuinfo"}};
         if (!ifp->fail()) {
             std::string line;
             while (std::getline(*ifp, line)) { fprintf(fp, "VLPROFPROC %s\n", line.c_str()); }

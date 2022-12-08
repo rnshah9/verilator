@@ -22,13 +22,16 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3LinkLevel.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 
 #include <algorithm>
 #include <map>
 #include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Levelizing class functions
@@ -75,9 +78,9 @@ void V3LinkLevel::modSortByLevel() {
     UINFO(9, "modSortByLevel() sorted\n");  // Comment required for gcc4.6.3 / bug666
     for (AstNodeModule* nodep : mods) nodep->unlinkFrBack();
     UASSERT_OBJ(!v3Global.rootp()->modulesp(), v3Global.rootp(), "Unlink didn't work");
-    for (AstNodeModule* nodep : mods) v3Global.rootp()->addModulep(nodep);
+    for (AstNodeModule* nodep : mods) v3Global.rootp()->addModulesp(nodep);
     UINFO(9, "modSortByLevel() done\n");  // Comment required for gcc4.6.3 / bug666
-    V3Global::dumpCheckGlobalTree("cells", false, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("cells", false, dumpTree() >= 3);
 }
 
 void V3LinkLevel::timescaling(const ModVec& mods) {
@@ -93,7 +96,7 @@ void V3LinkLevel::timescaling(const ModVec& mods) {
         }
     }
     unit = v3Global.opt.timeComputeUnit(unit);  // Apply override
-    if (unit.isNone()) unit = VTimescale(VTimescale::TS_DEFAULT);
+    if (unit.isNone()) unit = VTimescale{VTimescale::TS_DEFAULT};
     v3Global.rootp()->timeunit(unit);
 
     bool dunitTimed = false;  // $unit had a timeunit
@@ -126,7 +129,7 @@ void V3LinkLevel::timescaling(const ModVec& mods) {
 
     if (v3Global.rootp()->timeprecision().isNone()) {
         v3Global.rootp()->timeprecisionMerge(v3Global.rootp()->fileline(),
-                                             VTimescale(VTimescale::TS_DEFAULT));
+                                             VTimescale{VTimescale::TS_DEFAULT});
     }
 
     // Classes under package have timescale propaged in V3LinkParse
@@ -144,7 +147,7 @@ void V3LinkLevel::wrapTop(AstNetlist* rootp) {
         return;
     }
 
-    AstNodeModule* const newmodp = new AstModule(oldmodp->fileline(), "$root");
+    AstNodeModule* const newmodp = new AstModule{oldmodp->fileline(), "$root"};
     newmodp->name(AstNode::encodeName(newmodp->name()));  // so origName is nice
     // Make the new module first in the list
     oldmodp->unlinkFrBackWithNext();
@@ -153,7 +156,7 @@ void V3LinkLevel::wrapTop(AstNetlist* rootp) {
     newmodp->modPublic(true);
     newmodp->protect(false);
     newmodp->timeunit(oldmodp->timeunit());
-    rootp->addModulep(newmodp);
+    rootp->addModulesp(newmodp);
 
     // TODO the module creation above could be done after linkcells, but
     // the rest must be done after data type resolution
@@ -164,16 +167,16 @@ void V3LinkLevel::wrapTop(AstNetlist* rootp) {
     for (AstNodeModule* modp = rootp->modulesp(); modp; modp = VN_AS(modp->nextp(), NodeModule)) {
         if (VN_IS(modp, Package)) {
             AstCell* const cellp
-                = new AstCell(modp->fileline(), modp->fileline(),
+                = new AstCell{modp->fileline(), modp->fileline(),
                               // Could add __03a__03a="::" to prevent conflict
                               // with module names/"v"
-                              modp->name(), modp->name(), nullptr, nullptr, nullptr);
+                              modp->name(), modp->name(), nullptr, nullptr, nullptr};
             cellp->modp(modp);
-            newmodp->addStmtp(cellp);
+            newmodp->addStmtsp(cellp);
         }
     }
 
-    V3Global::dumpCheckGlobalTree("wraptop", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 6);
+    V3Global::dumpCheckGlobalTree("wraptop", 0, dumpTree() >= 6);
 }
 
 void V3LinkLevel::wrapTopCell(AstNetlist* rootp) {
@@ -196,6 +199,36 @@ void V3LinkLevel::wrapTopCell(AstNetlist* rootp) {
                     } else {
                         ioNames.insert(oldvarp->name());
                     }
+                } else if (v3Global.opt.topIfacesSupported() && oldvarp->isIfaceRef()) {
+                    const AstNodeDType* const subtypep = oldvarp->subDTypep();
+                    if (VN_IS(subtypep, IfaceRefDType)) {
+                        const AstIfaceRefDType* const ifacerefp = VN_AS(subtypep, IfaceRefDType);
+                        if (!ifacerefp->cellp()) {
+                            if (ioNames.find(oldvarp->name()) != ioNames.end()) {
+                                // UINFO(8, "Multitop dup interface found: " << oldvarp << endl);
+                                dupNames.insert(oldvarp->name());
+                            } else {
+                                ioNames.insert(oldvarp->name());
+                            }
+                        }
+                    }
+                    if (VN_IS(subtypep, UnpackArrayDType)) {
+                        const AstUnpackArrayDType* const arrp = VN_AS(subtypep, UnpackArrayDType);
+                        const AstNodeDType* const arrsubtypep = arrp->subDTypep();
+                        if (VN_IS(arrsubtypep, IfaceRefDType)) {
+                            const AstIfaceRefDType* const ifacerefp
+                                = VN_AS(arrsubtypep, IfaceRefDType);
+                            if (!ifacerefp->cellp()) {
+                                if (ioNames.find(oldvarp->name()) != ioNames.end()) {
+                                    // UINFO(8, "Multitop dup interface array found: " << oldvarp
+                                    // << endl);
+                                    dupNames.insert(oldvarp->name());
+                                } else {
+                                    ioNames.insert(oldvarp->name());
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -207,12 +240,16 @@ void V3LinkLevel::wrapTopCell(AstNetlist* rootp) {
         if (VN_IS(oldmodp, Package)) continue;
         // Add instance
         UINFO(5, "LOOP " << oldmodp << endl);
-        AstCell* const cellp = new AstCell(
-            newmodp->fileline(), newmodp->fileline(),
+        AstCell* const cellp = new AstCell{
+            newmodp->fileline(),
+            newmodp->fileline(),
             (!v3Global.opt.l2Name().empty() ? v3Global.opt.l2Name() : oldmodp->name()),
-            oldmodp->name(), nullptr, nullptr, nullptr);
+            oldmodp->name(),
+            nullptr,
+            nullptr,
+            nullptr};
         cellp->modp(oldmodp);
-        newmodp->addStmtp(cellp);
+        newmodp->addStmtsp(cellp);
 
         // Add pins
         for (AstNode* subnodep = oldmodp->stmtsp(); subnodep; subnodep = subnodep->nextp()) {
@@ -228,12 +265,10 @@ void V3LinkLevel::wrapTopCell(AstNetlist* rootp) {
                     AstVar* const varp = oldvarp->cloneTree(false);
                     varp->name(name);
                     varp->protect(false);
-                    newmodp->addStmtp(varp);
+                    newmodp->addStmtsp(varp);
                     varp->sigPublic(true);  // User needs to be able to get to it...
-                    if (oldvarp->isIO()) {
-                        oldvarp->primaryIO(false);
-                        varp->primaryIO(true);
-                    }
+                    oldvarp->primaryIO(false);
+                    varp->primaryIO(true);
                     if (varp->direction().isRefOrConstRef()) {
                         varp->v3warn(E_UNSUPPORTED,
                                      "Unsupported: ref/const ref as primary input/output: "
@@ -246,13 +281,111 @@ void V3LinkLevel::wrapTopCell(AstNetlist* rootp) {
                         varp->trace(false);
                     }
 
-                    AstPin* const pinp = new AstPin(
+                    AstPin* const pinp = new AstPin{
                         oldvarp->fileline(), 0, varp->name(),
-                        new AstVarRef(varp->fileline(), varp,
-                                      oldvarp->isWritable() ? VAccess::WRITE : VAccess::READ));
+                        new AstVarRef{varp->fileline(), varp,
+                                      oldvarp->isWritable() ? VAccess::WRITE : VAccess::READ}};
                     // Skip length and width comp; we know it's a direct assignment
                     pinp->modVarp(oldvarp);
                     cellp->addPinsp(pinp);
+                } else if (v3Global.opt.topIfacesSupported() && oldvarp->isIfaceRef()) {
+                    // for each interface port on oldmodp instantiate a corresponding interface
+                    // cell in $root
+                    const AstNodeDType* const subtypep = oldvarp->subDTypep();
+                    if (VN_IS(subtypep, IfaceRefDType)) {
+                        const AstIfaceRefDType* const ifacerefp = VN_AS(subtypep, IfaceRefDType);
+                        if (!ifacerefp->cellp()) {
+                            string name = oldvarp->name();
+                            if (dupNames.find(name) != dupNames.end()) {
+                                // __02E=. while __DOT__ looks nicer but will break V3LinkDot
+                                name = oldmodp->name() + "__02E" + name;
+                            }
+
+                            AstCell* ifacecellp = new AstCell{newmodp->fileline(),
+                                                              newmodp->fileline(),
+                                                              name,
+                                                              ifacerefp->ifaceName(),
+                                                              nullptr,
+                                                              nullptr,
+                                                              nullptr};
+                            ifacecellp->modp(ifacerefp->ifacep());
+                            newmodp->addStmtsp(ifacecellp);
+
+                            AstIfaceRefDType* const idtypep = new AstIfaceRefDType{
+                                newmodp->fileline(), name, ifacerefp->ifaceName()};
+                            idtypep->ifacep(nullptr);
+                            idtypep->dtypep(idtypep);
+                            idtypep->cellp(ifacecellp);
+                            rootp->typeTablep()->addTypesp(idtypep);
+
+                            AstVar* varp = new AstVar{newmodp->fileline(), VVarType::IFACEREF,
+                                                      name + "__Viftop", idtypep};
+                            varp->isIfaceParent(true);
+                            ifacecellp->addNextHere(varp);
+                            ifacecellp->hasIfaceVar(true);
+
+                            AstPin* const pinp
+                                = new AstPin{oldvarp->fileline(), 0, varp->name(),
+                                             new AstVarRef{varp->fileline(), varp,
+                                                           oldvarp->isWritable() ? VAccess::WRITE
+                                                                                 : VAccess::READ}};
+                            pinp->modVarp(oldvarp);
+                            cellp->addPinsp(pinp);
+                        }
+                    } else if (VN_IS(subtypep, UnpackArrayDType)) {
+                        const AstUnpackArrayDType* const oldarrp
+                            = VN_AS(subtypep, UnpackArrayDType);
+                        const AstNodeDType* const arrsubtypep = oldarrp->subDTypep();
+                        if (VN_IS(arrsubtypep, IfaceRefDType)) {
+                            const AstIfaceRefDType* const ifacerefp
+                                = VN_AS(arrsubtypep, IfaceRefDType);
+                            if (!ifacerefp->cellp()) {
+                                string name = oldvarp->name();
+                                if (dupNames.find(name) != dupNames.end()) {
+                                    // __02E=. while __DOT__ looks nicer but will break V3LinkDot
+                                    name = oldmodp->name() + "__02E" + name;
+                                }
+
+                                AstUnpackArrayDType* arraydtypep
+                                    = VN_AS(oldvarp->dtypep(), UnpackArrayDType);
+                                AstCell* ifacearraycellp
+                                    = new AstCell{newmodp->fileline(),
+                                                  newmodp->fileline(),
+                                                  name,
+                                                  ifacerefp->ifaceName(),
+                                                  nullptr,
+                                                  nullptr,
+                                                  arraydtypep->rangep()->cloneTree(true)};
+                                ifacearraycellp->modp(ifacerefp->ifacep());
+                                newmodp->addStmtsp(ifacearraycellp);
+
+                                AstIfaceRefDType* const idtypep = new AstIfaceRefDType{
+                                    newmodp->fileline(), name, ifacerefp->ifaceName()};
+                                idtypep->ifacep(nullptr);
+                                idtypep->dtypep(idtypep);
+                                idtypep->cellp(ifacearraycellp);
+                                rootp->typeTablep()->addTypesp(idtypep);
+
+                                AstNodeArrayDType* const arrp = new AstUnpackArrayDType{
+                                    newmodp->fileline(), idtypep,
+                                    arraydtypep->rangep()->cloneTree(true)};
+                                AstVar* varp = new AstVar{newmodp->fileline(), VVarType::IFACEREF,
+                                                          name + "__Viftop", arrp};
+                                varp->isIfaceParent(true);
+                                ifacearraycellp->addNextHere(varp);
+                                ifacearraycellp->hasIfaceVar(true);
+                                rootp->typeTablep()->addTypesp(arrp);
+
+                                AstPin* const pinp = new AstPin{
+                                    oldvarp->fileline(), 0, varp->name(),
+                                    new AstVarRef{varp->fileline(), varp,
+                                                  oldvarp->isWritable() ? VAccess::WRITE
+                                                                        : VAccess::READ}};
+                                pinp->modVarp(oldvarp);
+                                cellp->addPinsp(pinp);
+                            }
+                        }
+                    }
                 }
             }
         }

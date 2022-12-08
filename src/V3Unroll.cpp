@@ -27,14 +27,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Unroll.h"
-#include "V3Stats.h"
-#include "V3Const.h"
+
 #include "V3Ast.h"
+#include "V3Const.h"
+#include "V3Global.h"
 #include "V3Simulate.h"
+#include "V3Stats.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Unroll state, as a visitor of each AstNode
@@ -56,15 +59,14 @@ private:
     VDouble0 m_statIters;  // Statistic tracking
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     // VISITORS
     bool cantUnroll(AstNode* nodep, const char* reason) const {
         if (m_generate)
             nodep->v3warn(E_UNSUPPORTED, "Unsupported: Can't unroll generate for; " << reason);
         UINFO(3, "   Can't Unroll: " << reason << " :" << nodep << endl);
-        // if (debug() >= 9) nodep->dumpTree(cout, "-cant-");
-        V3Stats::addStatSum(string("Unrolling gave up, ") + reason, 1);
+        // if (debug() >= 9) nodep->dumpTree("-  cant: ");
+        V3Stats::addStatSum(std::string{"Unrolling gave up, "} + reason, 1);
         return false;
     }
 
@@ -149,7 +151,7 @@ private:
         } else {
             UINFO(8, "   Loop Variable: " << m_forVarp << endl);
         }
-        if (debug() >= 9) nodep->dumpTree(cout, "-   for: ");
+        if (debug() >= 9) nodep->dumpTree("-   for: ");
 
         if (!m_generate) {
             const AstAssign* const incpAssign = VN_AS(incp, Assign);
@@ -196,9 +198,9 @@ private:
         AstNode* clonep = nodep->cloneTree(true);
         UASSERT_OBJ(clonep, nodep, "Failed to clone tree");
         if (loopValue) {
-            m_varValuep = new AstConst(nodep->fileline(), *loopValue);
+            m_varValuep = new AstConst{nodep->fileline(), *loopValue};
             // Iteration requires a back, so put under temporary node
-            AstBegin* tempp = new AstBegin(nodep->fileline(), "[EditWrapper]", clonep);
+            AstBegin* tempp = new AstBegin{nodep->fileline(), "[EditWrapper]", clonep};
             m_varModeReplace = true;
             iterateAndNextNull(tempp->stmtsp());
             m_varModeReplace = false;
@@ -211,7 +213,7 @@ private:
         simvis.mainParamEmulate(clonep);
         if (!simvis.optimizable()) {
             UINFO(3, "Unable to simulate" << endl);
-            if (debug() >= 9) nodep->dumpTree(cout, "- _simtree: ");
+            if (debug() >= 9) nodep->dumpTree("-  _simtree: ");
             VL_DO_DANGLING(clonep->deleteTree(), clonep);
             return false;
         }
@@ -278,15 +280,15 @@ private:
         }
         if (precondsp) {
             precondsp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, precondsp);
+            stmtsp = AstNode::addNext(stmtsp, precondsp);
         }
         if (bodysp) {
             bodysp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, bodysp);  // Maybe null if no body
+            stmtsp = AstNode::addNext(stmtsp, bodysp);  // Maybe null if no body
         }
         if (incp && !VN_IS(nodep, GenFor)) {  // Generates don't need to increment loop index
             incp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, incp);  // Maybe null if no body
+            stmtsp = AstNode::addNext(stmtsp, incp);  // Maybe null if no body
         }
         // Mark variable to disable some later warnings
         m_forVarp->usedLoopIdx(true);
@@ -308,12 +310,12 @@ private:
                     // Replace iterator values with constant.
                     AstNode* oneloopp = stmtsp->cloneTree(true);
 
-                    m_varValuep = new AstConst(nodep->fileline(), loopValue);
+                    m_varValuep = new AstConst{nodep->fileline(), loopValue};
 
                     // Iteration requires a back, so put under temporary node
                     if (oneloopp) {
                         AstBegin* const tempp
-                            = new AstBegin(oneloopp->fileline(), "[EditWrapper]", oneloopp);
+                            = new AstBegin{oneloopp->fileline(), "[EditWrapper]", oneloopp};
                         m_varModeReplace = true;
                         iterateAndNextNull(tempp->stmtsp());
                         m_varModeReplace = false;
@@ -323,7 +325,7 @@ private:
                     if (m_generate) {
                         const string index = AstNode::encodeNumber(m_varValuep->toSInt());
                         const string nname = m_beginName + "__BRA__" + index + "__KET__";
-                        oneloopp = new AstBegin(oneloopp->fileline(), nname, oneloopp, true);
+                        oneloopp = new AstBegin{oneloopp->fileline(), nname, oneloopp, true};
                     }
                     VL_DO_CLEAR(pushDeletep(m_varValuep), m_varValuep = nullptr);
                     if (newbodysp) {
@@ -366,11 +368,11 @@ private:
         if (precondsp) VL_DO_DANGLING(pushDeletep(precondsp), precondsp);
         if (initp) VL_DO_DANGLING(pushDeletep(initp), initp);
         if (incp && !incp->backp()) VL_DO_DANGLING(pushDeletep(incp), incp);
-        if (debug() >= 9 && newbodysp) newbodysp->dumpTree(cout, "-  _new: ");
+        if (debug() >= 9 && newbodysp) newbodysp->dumpTree("-  _new: ");
         return true;
     }
 
-    virtual void visit(AstWhile* nodep) override {
+    void visit(AstWhile* nodep) override {
         iterateChildren(nodep);
         if (m_varModeCheck || m_varModeReplace) {
         } else {
@@ -386,26 +388,26 @@ private:
             if (nodep->backp()->nextp() == nodep) initp = nodep->backp();
             // Grab assignment
             AstNode* incp = nullptr;  // Should be last statement
-            AstNode* bodysp = nodep->bodysp();
+            AstNode* stmtsp = nodep->stmtsp();
             if (nodep->incsp()) V3Const::constifyEdit(nodep->incsp());
             // cppcheck-suppress duplicateCondition
             if (nodep->incsp()) {
                 incp = nodep->incsp();
             } else {
-                for (incp = nodep->bodysp(); incp && incp->nextp(); incp = incp->nextp()) {}
+                for (incp = nodep->stmtsp(); incp && incp->nextp(); incp = incp->nextp()) {}
                 if (incp) VL_DO_DANGLING(V3Const::constifyEdit(incp), incp);
                 // Again, as may have changed
-                bodysp = nodep->bodysp();
-                for (incp = nodep->bodysp(); incp && incp->nextp(); incp = incp->nextp()) {}
-                if (incp == bodysp) bodysp = nullptr;
+                stmtsp = nodep->stmtsp();
+                for (incp = nodep->stmtsp(); incp && incp->nextp(); incp = incp->nextp()) {}
+                if (incp == stmtsp) stmtsp = nullptr;
             }
             // And check it
-            if (forUnrollCheck(nodep, initp, nodep->precondsp(), nodep->condp(), incp, bodysp)) {
+            if (forUnrollCheck(nodep, initp, nodep->precondsp(), nodep->condp(), incp, stmtsp)) {
                 VL_DO_DANGLING(pushDeletep(nodep), nodep);  // Did replacement
             }
         }
     }
-    virtual void visit(AstGenFor* nodep) override {
+    void visit(AstGenFor* nodep) override {
         if (!m_generate || m_varModeReplace) {
             iterateChildren(nodep);
         }  // else V3Param will recursively call each for loop to be unrolled for us
@@ -425,22 +427,22 @@ private:
                 // deleted by V3Const.
                 VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
             } else if (forUnrollCheck(nodep, nodep->initsp(), nullptr, nodep->condp(),
-                                      nodep->incsp(), nodep->bodysp())) {
+                                      nodep->incsp(), nodep->stmtsp())) {
                 VL_DO_DANGLING(pushDeletep(nodep), nodep);  // Did replacement
             } else {
                 nodep->v3error("For loop doesn't have genvar index, or is malformed");
             }
         }
     }
-    virtual void visit(AstNodeFor* nodep) override {
+    void visit(AstNodeFor* nodep) override {
         if (m_generate) {  // Ignore for's when expanding genfor's
             iterateChildren(nodep);
         } else {
-            nodep->v3error("V3Begin should have removed standard FORs");
+            nodep->v3fatalSrc("V3Begin should have removed standard FORs");
         }
     }
 
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         if (m_varModeCheck && nodep->varp() == m_forVarp && nodep->varScopep() == m_forVscp
             && nodep->access().isWriteOrRW()) {
             UINFO(8, "   Itervar assigned to: " << nodep << endl);
@@ -457,7 +459,7 @@ private:
 
     //--------------------
     // Default: Just iterate
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         if (m_varModeCheck && nodep == m_ignoreIncp) {
             // Ignore subtree that is the increment
         } else {
@@ -468,7 +470,7 @@ private:
 public:
     // CONSTRUCTORS
     UnrollVisitor() { init(false, ""); }
-    virtual ~UnrollVisitor() override {
+    ~UnrollVisitor() override {
         V3Stats::addStatSum("Optimizations, Unrolled Loops", m_statLoops);
         V3Stats::addStatSum("Optimizations, Unrolled Iterations", m_statIters);
     }
@@ -516,5 +518,5 @@ void V3Unroll::unrollAll(AstNetlist* nodep) {
         UnrollStateful unroller;
         unroller.unrollAll(nodep);
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("unroll", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("unroll", 0, dumpTree() >= 3);
 }

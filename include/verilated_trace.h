@@ -35,23 +35,23 @@
 #include <unordered_set>
 #include <vector>
 
-#ifdef VL_THREADED
-# include <deque>
-# include <thread>
-#endif
+#include <deque>
+#include <thread>
 
 // clang-format on
 
 class VlThreadPool;
-template <class T_Buffer> class VerilatedTraceBuffer;
-template <class T_Buffer> class VerilatedTraceOffloadBuffer;
+template <class T_Buffer>
+class VerilatedTraceBuffer;
+template <class T_Buffer>
+class VerilatedTraceOffloadBuffer;
 
-#ifdef VL_THREADED
 //=============================================================================
 // Offloaded tracing
 
 // A simple synchronized first in first out queue
-template <class T> class VerilatedThreadQueue final {  // LCOV_EXCL_LINE  // lcov bug
+template <class T>
+class VerilatedThreadQueue final {  // LCOV_EXCL_LINE  // lcov bug
 private:
     mutable VerilatedMutex m_mutex;  // Protects m_queue
     std::condition_variable_any m_cv;
@@ -107,6 +107,7 @@ public:
         CHG_QDATA = 0x5,
         CHG_WDATA = 0x6,
         CHG_DOUBLE = 0x8,
+        CHG_EVENT = 0x9,
         // TODO: full..
         TIME_CHANGE = 0xc,
         TRACE_BUFFER = 0xd,
@@ -114,7 +115,6 @@ public:
         SHUTDOWN = 0xf  // Shutdown worker thread, also marks end of buffer
     };
 };
-#endif
 
 //=============================================================================
 // VerilatedTraceConfig
@@ -137,7 +137,8 @@ public:
 
 // T_Trace is the format specific subclass of VerilatedTrace.
 // T_Buffer is the format specific base class of VerilatedTraceBuffer.
-template <class T_Trace, class T_Buffer> class VerilatedTrace VL_NOT_FINAL {
+template <class T_Trace, class T_Buffer>
+class VerilatedTrace VL_NOT_FINAL {
 public:
     using Buffer = VerilatedTraceBuffer<T_Buffer>;
     using OffloadBuffer = VerilatedTraceOffloadBuffer<T_Buffer>;
@@ -182,10 +183,9 @@ private:
             , m_userp{userp} {}
     };
 
-    bool m_offload = false;  // Use the offload thread (ignored if !VL_THREADED)
-    bool m_parallel = false;  // Use parallel tracing (ignored if !VL_THREADED)
+    bool m_offload = false;  // Use the offload thread
+    bool m_parallel = false;  // Use parallel tracing
 
-#ifdef VL_THREADED
     struct ParallelWorkerData {
         const dumpCb_t m_cb;  // The callback
         void* const m_userp;  // The use pointer to pass to the callback
@@ -205,7 +205,6 @@ private:
 
     // Passed a ParallelWorkerData*, second argument is ignored
     static void parallelWorkerTask(void*, bool);
-#endif
 
 protected:
     uint32_t* m_sigs_oldvalp = nullptr;  // Previous value store
@@ -247,7 +246,6 @@ private:
     // Close the file on termination
     static void onExit(void* selfp) VL_MT_UNSAFE_ONE;
 
-#ifdef VL_THREADED
     // Number of total offload buffers that have been allocated
     uint32_t m_numOffloadBuffers = 0;
     // Size of offload buffers
@@ -278,7 +276,6 @@ private:
 
     // Shut down and join worker, if it's running, otherwise do nothing
     void shutdownOffloadWorker();
-#endif
 
     // CONSTRUCTORS
     VL_UNCOPYABLE(VerilatedTrace);
@@ -313,13 +310,8 @@ protected:
     void closeBase();
     void flushBase();
 
-#ifdef VL_THREADED
-    inline bool offload() const { return m_offload; }
-    inline bool parallel() const { return m_parallel; }
-#else
-    static constexpr bool offload() { return false; }
-    static constexpr bool parallel() { return false; }
-#endif
+    bool offload() const { return m_offload; }
+    bool parallel() const { return m_parallel; }
 
     //=========================================================================
     // Virtual functions to be provided by the format specific implementation
@@ -384,7 +376,7 @@ public:
 
 // T_Buffer is the format specific base class of VerilatedTraceBuffer.
 // The format-specific hot-path methods use duck-typing via T_Buffer for performance.
-template <class T_Buffer>  //
+template <class T_Buffer>
 class VerilatedTraceBuffer VL_NOT_FINAL : public T_Buffer {
 protected:
     // Type of the owner trace file
@@ -421,7 +413,7 @@ public:
     // duck-typed void emitWData(uint32_t code, const WData* newvalp, int bits) = 0;
     // duck-typed void emitDouble(uint32_t code, double newval) = 0;
 
-    VL_ATTR_ALWINLINE inline uint32_t* oldp(uint32_t code) { return m_sigs_oldvalp + code; }
+    VL_ATTR_ALWINLINE uint32_t* oldp(uint32_t code) { return m_sigs_oldvalp + code; }
 
     // Write to previous value buffer value and emit trace entry.
     void fullBit(uint32_t* oldp, CData newval);
@@ -431,33 +423,34 @@ public:
     void fullQData(uint32_t* oldp, QData newval, int bits);
     void fullWData(uint32_t* oldp, const WData* newvalp, int bits);
     void fullDouble(uint32_t* oldp, double newval);
+    void fullEvent(uint32_t* oldp, VlEvent newval);
 
     // In non-offload mode, these are called directly by the trace callbacks,
     // and are called chg*. In offload mode, they are called by the worker
     // thread and are called chg*Impl
 
     // Check previous dumped value of signal. If changed, then emit trace entry
-    VL_ATTR_ALWINLINE inline void chgBit(uint32_t* oldp, CData newval) {
+    VL_ATTR_ALWINLINE void chgBit(uint32_t* oldp, CData newval) {
         const uint32_t diff = *oldp ^ newval;
         if (VL_UNLIKELY(diff)) fullBit(oldp, newval);
     }
-    VL_ATTR_ALWINLINE inline void chgCData(uint32_t* oldp, CData newval, int bits) {
+    VL_ATTR_ALWINLINE void chgCData(uint32_t* oldp, CData newval, int bits) {
         const uint32_t diff = *oldp ^ newval;
         if (VL_UNLIKELY(diff)) fullCData(oldp, newval, bits);
     }
-    VL_ATTR_ALWINLINE inline void chgSData(uint32_t* oldp, SData newval, int bits) {
+    VL_ATTR_ALWINLINE void chgSData(uint32_t* oldp, SData newval, int bits) {
         const uint32_t diff = *oldp ^ newval;
         if (VL_UNLIKELY(diff)) fullSData(oldp, newval, bits);
     }
-    VL_ATTR_ALWINLINE inline void chgIData(uint32_t* oldp, IData newval, int bits) {
+    VL_ATTR_ALWINLINE void chgIData(uint32_t* oldp, IData newval, int bits) {
         const uint32_t diff = *oldp ^ newval;
         if (VL_UNLIKELY(diff)) fullIData(oldp, newval, bits);
     }
-    VL_ATTR_ALWINLINE inline void chgQData(uint32_t* oldp, QData newval, int bits) {
+    VL_ATTR_ALWINLINE void chgQData(uint32_t* oldp, QData newval, int bits) {
         const uint64_t diff = *reinterpret_cast<QData*>(oldp) ^ newval;
         if (VL_UNLIKELY(diff)) fullQData(oldp, newval, bits);
     }
-    VL_ATTR_ALWINLINE inline void chgWData(uint32_t* oldp, const WData* newvalp, int bits) {
+    VL_ATTR_ALWINLINE void chgWData(uint32_t* oldp, const WData* newvalp, int bits) {
         for (int i = 0; i < (bits + 31) / 32; ++i) {
             if (VL_UNLIKELY(oldp[i] ^ newvalp[i])) {
                 fullWData(oldp, newvalp, bits);
@@ -465,19 +458,19 @@ public:
             }
         }
     }
-    VL_ATTR_ALWINLINE inline void chgDouble(uint32_t* oldp, double newval) {
+    VL_ATTR_ALWINLINE void chgEvent(uint32_t* oldp, VlEvent newval) { fullEvent(oldp, newval); }
+    VL_ATTR_ALWINLINE void chgDouble(uint32_t* oldp, double newval) {
         // cppcheck-suppress invalidPointerCast
         if (VL_UNLIKELY(*reinterpret_cast<double*>(oldp) != newval)) fullDouble(oldp, newval);
     }
 };
 
-#ifdef VL_THREADED
 //=============================================================================
 // VerilatedTraceOffloadBuffer
 
 // T_Buffer is the format specific base class of VerilatedTraceBuffer.
 // The format-specific hot-path methods use duck-typing via T_Buffer for performance.
-template <class T_Buffer>  //
+template <class T_Buffer>
 class VerilatedTraceOffloadBuffer final : public VerilatedTraceBuffer<T_Buffer> {
     using typename VerilatedTraceBuffer<T_Buffer>::Trace;
 
@@ -494,48 +487,48 @@ public:
     // Hot path internal interface to Verilator generated code
 
     // Offloaded tracing. Just dump everything in the offload buffer
-    inline void chgBit(uint32_t code, CData newval) {
+    void chgBit(uint32_t code, CData newval) {
         m_offloadBufferWritep[0] = VerilatedTraceOffloadCommand::CHG_BIT_0 | newval;
         m_offloadBufferWritep[1] = code;
         m_offloadBufferWritep += 2;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgCData(uint32_t code, CData newval, int bits) {
+    void chgCData(uint32_t code, CData newval, int bits) {
         m_offloadBufferWritep[0] = (bits << 4) | VerilatedTraceOffloadCommand::CHG_CDATA;
         m_offloadBufferWritep[1] = code;
         m_offloadBufferWritep[2] = newval;
         m_offloadBufferWritep += 3;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgSData(uint32_t code, SData newval, int bits) {
+    void chgSData(uint32_t code, SData newval, int bits) {
         m_offloadBufferWritep[0] = (bits << 4) | VerilatedTraceOffloadCommand::CHG_SDATA;
         m_offloadBufferWritep[1] = code;
         m_offloadBufferWritep[2] = newval;
         m_offloadBufferWritep += 3;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgIData(uint32_t code, IData newval, int bits) {
+    void chgIData(uint32_t code, IData newval, int bits) {
         m_offloadBufferWritep[0] = (bits << 4) | VerilatedTraceOffloadCommand::CHG_IDATA;
         m_offloadBufferWritep[1] = code;
         m_offloadBufferWritep[2] = newval;
         m_offloadBufferWritep += 3;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgQData(uint32_t code, QData newval, int bits) {
+    void chgQData(uint32_t code, QData newval, int bits) {
         m_offloadBufferWritep[0] = (bits << 4) | VerilatedTraceOffloadCommand::CHG_QDATA;
         m_offloadBufferWritep[1] = code;
         *reinterpret_cast<QData*>(m_offloadBufferWritep + 2) = newval;
         m_offloadBufferWritep += 4;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgWData(uint32_t code, const WData* newvalp, int bits) {
+    void chgWData(uint32_t code, const WData* newvalp, int bits) {
         m_offloadBufferWritep[0] = (bits << 4) | VerilatedTraceOffloadCommand::CHG_WDATA;
         m_offloadBufferWritep[1] = code;
         m_offloadBufferWritep += 2;
         for (int i = 0; i < (bits + 31) / 32; ++i) { *m_offloadBufferWritep++ = newvalp[i]; }
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
-    inline void chgDouble(uint32_t code, double newval) {
+    void chgDouble(uint32_t code, double newval) {
         m_offloadBufferWritep[0] = VerilatedTraceOffloadCommand::CHG_DOUBLE;
         m_offloadBufferWritep[1] = code;
         // cppcheck-suppress invalidPointerCast
@@ -543,7 +536,12 @@ public:
         m_offloadBufferWritep += 4;
         VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
     }
+    void chgEvent(uint32_t code, VlEvent newval) {
+        m_offloadBufferWritep[0] = VerilatedTraceOffloadCommand::CHG_EVENT;
+        m_offloadBufferWritep[1] = code;
+        m_offloadBufferWritep += 2;
+        VL_DEBUG_IF(assert(m_offloadBufferWritep <= m_offloadBufferEndp););
+    }
 };
-#endif
 
 #endif  // guard

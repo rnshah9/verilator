@@ -17,9 +17,10 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
+#include "V3EmitCFunc.h"
+
 #include "V3Global.h"
 #include "V3String.h"
-#include "V3EmitCFunc.h"
 #include "V3TSP.h"
 
 #include <map>
@@ -31,19 +32,13 @@ constexpr int VL_VALUE_STRING_MAX_WIDTH = 8192;
 //######################################################################
 // EmitCFunc
 
-bool EmitCFunc::emitSimpleOk(AstNodeMath* nodep) {
+bool EmitCFunc::emitSimpleOk(AstNodeExpr* nodep) {
     // Can we put out a simple (A + B) instead of VL_ADD_III(A,B)?
     if (nodep->emitSimpleOperator() == "") return false;
     if (nodep->isWide()) return false;
-    if (nodep->op1p()) {
-        if (nodep->op1p()->isWide()) return false;
-    }
-    if (nodep->op2p()) {
-        if (nodep->op2p()->isWide()) return false;
-    }
-    if (nodep->op3p()) {
-        if (nodep->op3p()->isWide()) return false;
-    }
+    if (nodep->op1p() && nodep->op1p()->isWide()) return false;
+    if (nodep->op2p() && nodep->op2p()->isWide()) return false;
+    if (nodep->op3p() && nodep->op3p()->isWide()) return false;
     return true;
 }
 
@@ -427,17 +422,8 @@ void EmitCFunc::emitCCallArgs(const AstNodeCCall* nodep, const string& selfPoint
         puts(nodep->argTypes());
         comma = true;
     }
-    for (AstNode* subnodep = nodep->argsp(); subnodep; subnodep = subnodep->nextp()) {
-        if (comma) puts(", ");
-        iterate(subnodep);
-        comma = true;
-    }
-    if (VN_IS(nodep->backp(), NodeMath) || VN_IS(nodep->backp(), CReturn)) {
-        // We should have a separate CCall for math and statement usage, but...
-        puts(")");
-    } else {
-        puts(");\n");
-    }
+    putCommaIterateNext(nodep->argsp(), comma);
+    puts(")");
 }
 
 void EmitCFunc::emitDereference(const string& pointer) {
@@ -454,9 +440,9 @@ void EmitCFunc::emitDereference(const string& pointer) {
 
 void EmitCFunc::emitCvtPackStr(AstNode* nodep) {
     if (const AstConst* const constp = VN_CAST(nodep, Const)) {
-        putbs("std::string(");
+        putbs("std::string{");
         putsQuoted(constp->num().toString());
-        puts(")");
+        puts("}");
     } else {
         putbs("VL_CVT_PACK_STR_N");
         emitIQW(nodep);
@@ -482,12 +468,14 @@ void EmitCFunc::emitCvtWideArray(AstNode* nodep, AstNode* fromp) {
 
 void EmitCFunc::emitConstant(AstConst* nodep, AstVarRef* assigntop, const string& assignString) {
     // Put out constant set to the specified variable, or given variable in a string
-    if (nodep->num().isFourState()) {
+    if (nodep->num().isNull()) {
+        puts("VlNull{}");
+    } else if (nodep->num().isFourState()) {
         nodep->v3warn(E_UNSUPPORTED, "Unsupported: 4-state numbers in this context");
     } else if (nodep->num().isString()) {
-        putbs("std::string(");
+        putbs("std::string{");
         putsQuoted(nodep->num().toString());
-        puts(")");
+        puts("}");
     } else if (nodep->isWide()) {
         int upWidth = nodep->num().widthMin();
         int chunks = 0;
@@ -624,7 +612,7 @@ void EmitCFunc::emitVarReset(AstVar* varp) {
             }
         } else if (AstUnpackArrayDType* const adtypep = VN_CAST(dtypep, UnpackArrayDType)) {
             if (initarp->defaultp()) {
-                puts("for (int __Vi=0; __Vi<" + cvtToStr(adtypep->elementsConst()));
+                puts("for (int __Vi = 0; __Vi < " + cvtToStr(adtypep->elementsConst()));
                 puts("; ++__Vi) {\n");
                 emitSetVarConstant(varNameProtected + "[__Vi]", VN_AS(initarp->defaultp(), Const));
                 puts("}\n");
@@ -660,6 +648,8 @@ string EmitCFunc::emitVarResetRecurse(const AstVar* varp, const string& varNameP
                                    suffix + ".atDefault()" + cvtarray);
     } else if (VN_IS(dtypep, ClassRefDType)) {
         return "";  // Constructor does it
+    } else if (VN_IS(dtypep, IfaceRefDType)) {
+        return varNameProtected + suffix + " = nullptr;\n";
     } else if (const AstDynArrayDType* const adtypep = VN_CAST(dtypep, DynArrayDType)) {
         // Access std::array as C array
         const string cvtarray = (adtypep->subDTypep()->isWide() ? ".data()" : "");
@@ -674,7 +664,7 @@ string EmitCFunc::emitVarResetRecurse(const AstVar* varp, const string& varNameP
         UASSERT_OBJ(adtypep->hi() >= adtypep->lo(), varp,
                     "Should have swapped msb & lsb earlier.");
         const string ivar = string("__Vi") + cvtToStr(depth);
-        const string pre = ("for (int " + ivar + "=" + cvtToStr(0) + "; " + ivar + "<"
+        const string pre = ("for (int " + ivar + " = " + cvtToStr(0) + "; " + ivar + " < "
                             + cvtToStr(adtypep->elementsConst()) + "; ++" + ivar + ") {\n");
         const string below = emitVarResetRecurse(varp, varNameProtected, adtypep->subDTypep(),
                                                  depth + 1, suffix + "[" + ivar + "]");
@@ -682,6 +672,14 @@ string EmitCFunc::emitVarResetRecurse(const AstVar* varp, const string& varNameP
         return below.empty() ? "" : pre + below + post;
     } else if (basicp && basicp->keyword() == VBasicDTypeKwd::STRING) {
         // String's constructor deals with it
+        return "";
+    } else if (basicp && basicp->isForkSync()) {
+        return "";
+    } else if (basicp && basicp->isDelayScheduler()) {
+        return "";
+    } else if (basicp && basicp->isTriggerScheduler()) {
+        return "";
+    } else if (basicp && basicp->isDynamicTriggerScheduler()) {
         return "";
     } else if (basicp) {
         const bool zeroit
@@ -725,81 +723,4 @@ string EmitCFunc::emitVarResetRecurse(const AstVar* varp, const string& varNameP
         v3fatalSrc("Unknown node type in reset generator: " << varp->prettyTypeName());
     }
     return "";
-}
-
-void EmitCFunc::doubleOrDetect(AstChangeDet* changep, bool& gotOne) {
-    // cppcheck-suppress variableScope
-    static int s_addDoubleOr = 10;  // Determined experimentally as best
-    if (!changep->rhsp()) {
-        if (!gotOne) {
-            gotOne = true;
-        } else {
-            puts(" | ");
-        }
-        iterateAndNextNull(changep->lhsp());
-    } else {
-        AstNode* const lhsp = changep->lhsp();
-        AstNode* const rhsp = changep->rhsp();
-        UASSERT_OBJ(VN_IS(lhsp, VarRef) || VN_IS(lhsp, ArraySel), changep, "Not ref?");
-        UASSERT_OBJ(VN_IS(rhsp, VarRef) || VN_IS(rhsp, ArraySel), changep, "Not ref?");
-        for (int word = 0; word < (changep->lhsp()->isWide() ? changep->lhsp()->widthWords() : 1);
-             ++word) {
-            if (!gotOne) {
-                gotOne = true;
-                s_addDoubleOr = 10;
-                puts("(");
-            } else if (--s_addDoubleOr == 0) {
-                puts("|| (");
-                s_addDoubleOr = 10;
-            } else {
-                puts(" | (");
-            }
-            iterateAndNextNull(changep->lhsp());
-            if (changep->lhsp()->isWide()) puts("[" + cvtToStr(word) + "]");
-            if (changep->lhsp()->isDouble()) {
-                puts(" != ");
-            } else {
-                puts(" ^ ");
-            }
-            iterateAndNextNull(changep->rhsp());
-            if (changep->lhsp()->isWide()) puts("[" + cvtToStr(word) + "]");
-            puts(")");
-        }
-    }
-}
-
-void EmitCFunc::emitChangeDet() {
-    putsDecoration("// Change detection\n");
-    puts("QData __req = false;  // Logically a bool\n");  // But not because it results in
-    // faster code
-    bool gotOne = false;
-    for (AstChangeDet* const changep : m_blkChangeDetVec) {
-        if (changep->lhsp()) {
-            if (!gotOne) {  // Not a clocked block
-                puts("__req |= (");
-            } else {
-                puts("\n");
-            }
-            doubleOrDetect(changep, gotOne);
-        }
-    }
-    if (gotOne) puts(");\n");
-    if (gotOne && !v3Global.opt.protectIds()) {
-        // puts("VL_DEBUG_IF( if (__req) cout<<\"- CLOCKREQ );");
-        for (AstChangeDet* nodep : m_blkChangeDetVec) {
-            if (nodep->lhsp()) {
-                puts("VL_DEBUG_IF( if(__req && (");
-                bool gotOneIgnore = false;
-                doubleOrDetect(nodep, gotOneIgnore);
-                string varname;
-                if (VN_IS(nodep->lhsp(), VarRef)) {
-                    varname = ": " + VN_AS(nodep->lhsp(), VarRef)->varp()->prettyName();
-                }
-                puts(")) VL_DBG_MSGF(\"        CHANGE: ");
-                puts(protect(nodep->fileline()->filename()));
-                puts(":" + cvtToStr(nodep->fileline()->lineno()));
-                puts(varname + "\\n\"); );\n");
-            }
-        }
-    }
 }

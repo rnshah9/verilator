@@ -28,7 +28,7 @@ Now, let's create an example Verilog, and C++ wrapper file:
      cat >sim_main.cpp <<'EOF'
        #include "Vour.h"
        #include "verilated.h"
-       int main(int argc, char** argv, char** env) {
+       int main(int argc, char** argv) {
            VerilatedContext* contextp = new VerilatedContext;
            contextp->commandArgs(argc, argv);
            Vour* top = new Vour{contextp};
@@ -43,12 +43,9 @@ Now we run Verilator on our little example.
 
 .. code-block:: bash
 
-     verilator -Wall --cc --exe --build sim_main.cpp our.v
+     verilator --cc --exe --build -j 0 -Wall sim_main.cpp our.v
 
 Breaking this command down:
-
-#. :vlopt:`-Wall` so Verilator has stronger lint warnings
-   enabled.
 
 #. :vlopt:`--cc` to get C++ output (versus e.g. SystemC
    or only linting).
@@ -60,6 +57,12 @@ Breaking this command down:
    need to manually call make as a separate step. You can also write your
    own compile rules, and run make yourself as we show in :ref:`Example
    SystemC Execution`.)
+
+#. :vlopt:`-j` `0' to Verilate using use as many CPU threads as the machine
+   has.
+
+#. :vlopt:`-Wall` so Verilator has stronger lint warnings
+   enabled.
 
 #. An finally, :command:`our.v` which is our SystemVerilog design file.
 

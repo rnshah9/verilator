@@ -12,18 +12,18 @@
 #ifdef IS_VPI
 
 #include "vpi_user.h"
+
 #include <cstdlib>
 
 #else
 
-#include "Vt_vpi_get.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_get__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
+
+#include "Vt_vpi_get.h"
+#include "Vt_vpi_get__Dpi.h"
+#include "svdpi.h"
 
 #endif
 
@@ -31,6 +31,7 @@
 #include <cstring>
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
 #include "TestSimulator.h"
 #include "TestVpi.h"
 
@@ -70,7 +71,7 @@
     }
 
 #define CHECK_RESULT_CSTR(got, exp) \
-    if (strcmp((got), (exp))) { \
+    if (std::strcmp((got), (exp))) { \
         printf("%%Error: %s:%d: GOT = '%s'   EXP = '%s'\n", FILENM, __LINE__, \
                (got) ? (got) : "<null>", (exp) ? (exp) : "<null>"); \
         return __LINE__; \
@@ -238,7 +239,7 @@ void vpi_compat_bootstrap(void) {
 void (*vlog_startup_routines[])() = {vpi_compat_bootstrap, 0};
 
 #else
-int main(int argc, char** argv, char** env) {
+int main(int argc, char** argv) {
     const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
 
     uint64_t sim_time = 1100;

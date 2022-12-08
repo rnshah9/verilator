@@ -9,22 +9,22 @@
 //
 //*************************************************************************
 
-#include "Vt_vpi_time_cb.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_time_cb__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
 
-#include "TestCheck.h"
+#include "Vt_vpi_time_cb.h"
+#include "Vt_vpi_time_cb__Dpi.h"
+#include "svdpi.h"
 
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
+#include "TestCheck.h"
+
 //======================================================================
 
-int main(int argc, char** argv, char** env) {
+int main(int argc, char** argv) {
     const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
 
     uint64_t sim_time = 1100;

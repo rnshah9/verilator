@@ -17,15 +17,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
-#include "V3Stats.h"
 #include "V3Ast.h"
 #include "V3File.h"
+#include "V3Global.h"
 #include "V3Os.h"
+#include "V3Stats.h"
 
 #include <iomanip>
 #include <map>
 #include <unordered_map>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Stats dumping
@@ -44,6 +46,7 @@ class StatsReport final {
         os << "Information:\n";
         os << "  " << V3Options::version() << '\n';
         os << "  Arguments: " << v3Global.opt.allArgsString() << '\n';
+        os << "  Build jobs: " << v3Global.opt.buildJobs() << '\n';
         os << '\n';
     }
 
@@ -118,8 +121,9 @@ class StatsReport final {
             const V3Statistic* repp = &(*it);
             if (repp->stage() != "*" && repp->printit()) {
                 if (maxWidth < repp->name().length()) maxWidth = repp->name().length();
-                if (stageInt.find(repp->stage()) == stageInt.end()) {
-                    stageInt.emplace(repp->stage(), stage++);
+                const auto itFoundPair = stageInt.emplace(repp->stage(), stage);
+                if (itFoundPair.second) {
+                    ++stage;
                     stages.push_back(repp->stage());
                 }
                 byName.emplace(repp->name(), repp);
@@ -225,7 +229,7 @@ void V3Stats::statsReport() {
     std::ofstream* ofp{V3File::new_ofstream(filename)};
     if (ofp->fail()) v3fatal("Can't write " << filename);
 
-    const StatsReport reporter(ofp);
+    { StatsReport{ofp}; }  // Destruct before cleanup
 
     // Cleanup
     ofp->close();

@@ -50,7 +50,7 @@ private:
     bool m_fileNewed;  // m_filep needs destruction
     bool m_isOpen = false;  // True indicates open file
     std::string m_filename;  // Filename we're writing to (if open)
-    uint64_t m_rolloverMB = 0;  // MB of file size to rollover at
+    uint64_t m_rolloverSize = 0;  // File size to rollover at
     int m_modDepth = 0;  // Depth of module hierarchy
 
     char* m_wrBufp;  // Output buffer
@@ -65,15 +65,13 @@ private:
     using NameMap = std::map<const std::string, const std::string>;
     NameMap* m_namemapp = nullptr;  // List of names for the header
 
-#ifdef VL_THREADED
     // Vector of free trace buffers as (pointer, size) pairs.
     std::vector<std::pair<char*, size_t>> m_freeBuffers;
     size_t m_numBuffers = 0;  // Number of trace buffers allocated
-#endif
 
     void bufferResize(size_t minsize);
     void bufferFlush() VL_MT_UNSAFE_ONE;
-    inline void bufferCheck() {
+    void bufferCheck() {
         // Flush the write buffer if there's not enough space left for new information
         // We only call this once per vector, so we need enough slop for a very wide "b###" line
         if (VL_UNLIKELY(m_writep > m_wrFlushp)) bufferFlush();
@@ -124,8 +122,8 @@ public:
     ~VerilatedVcd();
 
     // ACCESSORS
-    // Set size in megabytes after which new file should be created
-    void rolloverMB(uint64_t rolloverMB) { m_rolloverMB = rolloverMB; }
+    // Set size in bytes after which new file should be created.
+    void rolloverSize(uint64_t size) VL_MT_SAFE { m_rolloverSize = size; }
 
     // METHODS - All must be thread safe
     // Open the file; call isOpen() to see if errors
@@ -142,6 +140,7 @@ public:
     //=========================================================================
     // Internal interface to Verilator generated code
 
+    void declEvent(uint32_t code, const char* name, bool array, int arraynum);
     void declBit(uint32_t code, const char* name, bool array, int arraynum);
     void declBus(uint32_t code, const char* name, bool array, int arraynum, int msb, int lsb);
     void declQuad(uint32_t code, const char* name, bool array, int arraynum, int msb, int lsb);
@@ -151,19 +150,25 @@ public:
 
 #ifndef DOXYGEN
 // Declare specialization here as it's used in VerilatedFstC just below
-template <> void VerilatedVcd::Super::dump(uint64_t time);
-template <> void VerilatedVcd::Super::set_time_unit(const char* unitp);
-template <> void VerilatedVcd::Super::set_time_unit(const std::string& unit);
-template <> void VerilatedVcd::Super::set_time_resolution(const char* unitp);
-template <> void VerilatedVcd::Super::set_time_resolution(const std::string& unit);
-template <> void VerilatedVcd::Super::dumpvars(int level, const std::string& hier);
+template <>
+void VerilatedVcd::Super::dump(uint64_t time);
+template <>
+void VerilatedVcd::Super::set_time_unit(const char* unitp);
+template <>
+void VerilatedVcd::Super::set_time_unit(const std::string& unit);
+template <>
+void VerilatedVcd::Super::set_time_resolution(const char* unitp);
+template <>
+void VerilatedVcd::Super::set_time_resolution(const std::string& unit);
+template <>
+void VerilatedVcd::Super::dumpvars(int level, const std::string& hier);
 #endif  // DOXYGEN
 
 //=============================================================================
 // VerilatedVcdBuffer
 
 class VerilatedVcdBuffer VL_NOT_FINAL {
-    // Give the trace file ans sub-classes access to the private bits
+    // Give the trace file and sub-classes access to the private bits
     friend VerilatedVcd;
     friend VerilatedVcd::Super;
     friend VerilatedVcd::Buffer;
@@ -181,7 +186,6 @@ class VerilatedVcdBuffer VL_NOT_FINAL {
     // The maximum number of bytes a single signal can emit
     const size_t m_maxSignalBytes = m_owner.m_maxSignalBytes;
 
-#ifdef VL_THREADED
     // Additional data for parallel tracing only
     char* m_bufp = nullptr;  // The beginning of the trace buffer
     size_t m_size = 0;  // The size of the buffer at m_bufp
@@ -191,7 +195,6 @@ class VerilatedVcdBuffer VL_NOT_FINAL {
         m_growp = (m_bufp + m_size) - (2 * m_maxSignalBytes);
         assert(m_growp >= m_bufp + m_maxSignalBytes);
     }
-#endif
 
     void finishLine(uint32_t code, char* writep);
 
@@ -204,13 +207,14 @@ class VerilatedVcdBuffer VL_NOT_FINAL {
     // Implementation of VerilatedTraceBuffer interface
     // Implementations of duck-typed methods for VerilatedTraceBuffer. These are
     // called from only one place (the full* methods), so always inline them.
-    VL_ATTR_ALWINLINE inline void emitBit(uint32_t code, CData newval);
-    VL_ATTR_ALWINLINE inline void emitCData(uint32_t code, CData newval, int bits);
-    VL_ATTR_ALWINLINE inline void emitSData(uint32_t code, SData newval, int bits);
-    VL_ATTR_ALWINLINE inline void emitIData(uint32_t code, IData newval, int bits);
-    VL_ATTR_ALWINLINE inline void emitQData(uint32_t code, QData newval, int bits);
-    VL_ATTR_ALWINLINE inline void emitWData(uint32_t code, const WData* newvalp, int bits);
-    VL_ATTR_ALWINLINE inline void emitDouble(uint32_t code, double newval);
+    VL_ATTR_ALWINLINE void emitEvent(uint32_t code, VlEvent newval);
+    VL_ATTR_ALWINLINE void emitBit(uint32_t code, CData newval);
+    VL_ATTR_ALWINLINE void emitCData(uint32_t code, CData newval, int bits);
+    VL_ATTR_ALWINLINE void emitSData(uint32_t code, SData newval, int bits);
+    VL_ATTR_ALWINLINE void emitIData(uint32_t code, IData newval, int bits);
+    VL_ATTR_ALWINLINE void emitQData(uint32_t code, QData newval, int bits);
+    VL_ATTR_ALWINLINE void emitWData(uint32_t code, const WData* newvalp, int bits);
+    VL_ATTR_ALWINLINE void emitDouble(uint32_t code, double newval);
 };
 
 //=============================================================================
@@ -265,8 +269,12 @@ public:
     /// The header is only in the first file created, this allows
     /// "cat" to be used to combine the header plus any number of data files.
     void openNext(bool incFilename = true) VL_MT_SAFE { m_sptrace.openNext(incFilename); }
-    /// Set size in megabytes after which new file should be created
-    void rolloverMB(size_t rolloverMB) VL_MT_SAFE { m_sptrace.rolloverMB(rolloverMB); }
+    /// Set size in bytes after which new file should be created
+    /// This will create a header file, followed by each separate file
+    /// which might be larger than the given size (due to chunking and
+    /// alignment to a start of a given time's dump).  Any file but the
+    /// first may be removed.  Cat files together to create viewable vcd.
+    void rolloverSize(size_t size) VL_MT_SAFE { m_sptrace.rolloverSize(size); }
     /// Close dump
     void close() VL_MT_SAFE { m_sptrace.close(); }
     /// Flush dump
@@ -303,7 +311,7 @@ public:
     }
 
     // Internal class access
-    inline VerilatedVcd* spTrace() { return &m_sptrace; }
+    VerilatedVcd* spTrace() { return &m_sptrace; }
 };
 
 #endif  // guard

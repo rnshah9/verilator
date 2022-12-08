@@ -40,11 +40,13 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Error.h"
-#include "V3Global.h"
 #include "V3Force.h"
 
 #include "V3AstUserAllocator.h"
+#include "V3Error.h"
+#include "V3Global.h"
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Convert force/release statements and signals marked 'forceable'
@@ -102,14 +104,14 @@ class ForceConvertVisitor final : public VNVisitor {
                 AstVarRef* const lhsp = new AstVarRef{flp, m_enVscp, VAccess::WRITE};
                 V3Number zero{m_enVscp, m_enVscp->width()};
                 zero.setAllBits0();
-                AstNodeMath* const rhsp = new AstConst{flp, zero};
+                AstNodeExpr* const rhsp = new AstConst{flp, zero};
                 AstAssign* const assignp = new AstAssign{flp, lhsp, rhsp};
                 AstActive* const activep = new AstActive{
                     flp, "force-init",
                     new AstSenTree{flp, new AstSenItem{flp, AstSenItem::Initial{}}}};
                 activep->sensesStorep(activep->sensesp());
                 activep->addStmtsp(new AstInitial{flp, assignp});
-                vscp->scopep()->addActivep(activep);
+                vscp->scopep()->addBlocksp(activep);
             }
 
             {  // Add the combinational override
@@ -127,7 +129,7 @@ class ForceConvertVisitor final : public VNVisitor {
                                     new AstSenTree{flp, new AstSenItem{flp, AstSenItem::Combo{}}}};
                 activep->sensesStorep(activep->sensesp());
                 activep->addStmtsp(new AstAssignW{flp, lhsp, rhsp});
-                vscp->scopep()->addActivep(activep);
+                vscp->scopep()->addBlocksp(activep);
             }
         }
     };
@@ -151,7 +153,7 @@ class ForceConvertVisitor final : public VNVisitor {
     // referenced AstVarScope with the given function.
     void transformWritenVarScopes(AstNode* nodep, std::function<AstVarScope*(AstVarScope*)> f) {
         UASSERT_OBJ(nodep->backp(), nodep, "Must have backp, otherwise will be lost if replaced");
-        nodep->foreach<AstNodeVarRef>([&f](AstNodeVarRef* refp) {
+        nodep->foreach([&f](AstNodeVarRef* refp) {
             if (refp->access() != VAccess::WRITE) return;
             // TODO: this is not strictly speaking safe for some complicated lvalues, eg.:
             //       'force foo[a(cnt)] = 1;', where 'cnt' is an out parameter, but it will
@@ -172,8 +174,8 @@ class ForceConvertVisitor final : public VNVisitor {
         pushDeletep(nodep);
 
         FileLine* const flp = nodep->fileline();
-        AstNode* const lhsp = nodep->lhsp();  // The LValue we are forcing
-        AstNode* const rhsp = nodep->rhsp();  // The value we are forcing it to
+        AstNodeExpr* const lhsp = nodep->lhsp();  // The LValue we are forcing
+        AstNodeExpr* const rhsp = nodep->rhsp();  // The value we are forcing it to
 
         // Set corresponding enable signals to ones
         V3Number ones{lhsp, lhsp->width()};
@@ -208,7 +210,7 @@ class ForceConvertVisitor final : public VNVisitor {
         pushDeletep(nodep);
 
         FileLine* const flp = nodep->fileline();
-        AstNode* const lhsp = nodep->lhsp();  // The LValue we are releasing
+        AstNodeExpr* const lhsp = nodep->lhsp();  // The LValue we are releasing
 
         // Set corresponding enable signals to zero
         V3Number zero{lhsp, lhsp->width()};
@@ -228,7 +230,7 @@ class ForceConvertVisitor final : public VNVisitor {
         AstAssign* const resetRdp
             = new AstAssign{fl_nowarn, lhsp->cloneTree(false), lhsp->unlinkFrBack()};
         // Replace write refs on the LHS
-        resetRdp->lhsp()->foreach<AstNodeVarRef>([this](AstNodeVarRef* refp) {
+        resetRdp->lhsp()->foreach([this](AstNodeVarRef* refp) {
             if (refp->access() != VAccess::WRITE) return;
             AstVarScope* const vscp = refp->varScopep();
             AstVarScope* const newVscp
@@ -241,7 +243,7 @@ class ForceConvertVisitor final : public VNVisitor {
             VL_DO_DANGLING(refp->deleteTree(), refp);
         });
         // Replace write refs on RHS
-        resetRdp->rhsp()->foreach<AstNodeVarRef>([this](AstNodeVarRef* refp) {
+        resetRdp->rhsp()->foreach([this](AstNodeVarRef* refp) {
             if (refp->access() != VAccess::WRITE) return;
             AstVarScope* const vscp = refp->varScopep();
             AstVarScope* const newVscp
@@ -271,7 +273,7 @@ class ForceConvertVisitor final : public VNVisitor {
         iterateAndNextNull(nodep->modulesp());
 
         // Replace references to forced signals
-        nodep->modulesp()->foreachAndNext<AstVarRef>([this](AstVarRef* nodep) {
+        nodep->modulesp()->foreachAndNext([this](AstVarRef* nodep) {
             if (ForceComponentsVarScope* const fcp
                 = m_forceComponentsVarScope.tryGet(nodep->varScopep())) {
                 switch (nodep->access()) {
@@ -305,5 +307,5 @@ void V3Force::forceAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     if (!v3Global.hasForceableSignals()) return;
     ForceConvertVisitor::apply(nodep);
-    V3Global::dumpCheckGlobalTree("force", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("force", 0, dumpTree() >= 3);
 }

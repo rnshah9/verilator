@@ -73,11 +73,7 @@ extern void VL_WARN_MT(const char* filename, int linenum, const char* hier,
 
 // clang-format off
 /// Print a string, multithread safe. Eventually VL_PRINTF will get called.
-#ifdef VL_THREADED
 extern void VL_PRINTF_MT(const char* formatp, ...) VL_ATTR_PRINTF(1) VL_MT_SAFE;
-#else
-# define VL_PRINTF_MT VL_PRINTF  // The following parens will take care of themselves
-#endif
 // clang-format on
 
 /// Print a debug message from internals with standard prefix, with printf style format
@@ -142,6 +138,8 @@ extern void VL_SFORMAT_X(int obits, IData& destr, const char* formatp, ...);
 extern void VL_SFORMAT_X(int obits, QData& destr, const char* formatp, ...);
 extern void VL_SFORMAT_X(int obits, void* destp, const char* formatp, ...);
 
+extern void VL_STACKTRACE() VL_MT_SAFE;
+extern std::string VL_STACKTRACE_N() VL_MT_SAFE;
 extern IData VL_SYSTEM_IW(int lhswords, WDataInP const lhsp);
 extern IData VL_SYSTEM_IQ(QData lhs);
 inline IData VL_SYSTEM_II(IData lhs) VL_MT_SAFE { return VL_SYSTEM_IQ(lhs); }
@@ -261,28 +259,29 @@ extern void _vl_debug_print_w(int lbits, WDataInP const iwp);
 #if defined(SYSTEMC_VERSION)
 /// Return current simulation time
 // Already defined: extern sc_time sc_time_stamp();
-inline uint64_t vl_time_stamp64() { return sc_time_stamp().value(); }
+inline uint64_t vl_time_stamp64() VL_MT_SAFE { return sc_time_stamp().value(); }
 #else  // Non-SystemC
 # if !defined(VL_TIME_CONTEXT) && !defined(VL_NO_LEGACY)
 #  ifdef VL_TIME_STAMP64
 // vl_time_stamp64() may be optionally defined by the user to return time.
 // On MSVC++ weak symbols are not supported so must be declared, or define
 // VL_TIME_CONTEXT.
-extern uint64_t vl_time_stamp64() VL_ATTR_WEAK;
+extern uint64_t vl_time_stamp64() VL_ATTR_WEAK VL_MT_SAFE;
 #  else
 // sc_time_stamp() may be optionally defined by the user to return time.
 // On MSVC++ weak symbols are not supported so must be declared, or define
 // VL_TIME_CONTEXT.
-extern double sc_time_stamp() VL_ATTR_WEAK;  // Verilator 4.032 and newer
-inline uint64_t vl_time_stamp64() {
+extern double sc_time_stamp() VL_ATTR_WEAK VL_MT_SAFE;  // Verilator 4.032 and newer
+inline uint64_t vl_time_stamp64() VL_MT_SAFE {
     // clang9.0.1 requires & although we really do want the weak symbol value
+    // cppcheck-suppress duplicateValueTernary
     return VL_LIKELY(&sc_time_stamp) ? static_cast<uint64_t>(sc_time_stamp()) : 0;
 }
 #  endif
 # endif
 #endif
 
-inline uint64_t VerilatedContext::time() const VL_MT_SAFE {
+uint64_t VerilatedContext::time() const VL_MT_SAFE {
     // When using non-default context, fastest path is return time
     if (VL_LIKELY(m_s.m_time)) return m_s.m_time;
 #if defined(SYSTEMC_VERSION) || (!defined(VL_TIME_CONTEXT) && !defined(VL_NO_LEGACY))
@@ -448,10 +447,17 @@ static inline void VL_ASSIGNBIT_WO(int bit, WDataOutP owp) VL_MT_SAFE {
     { \
         const int words = VL_WORDS_I(obits); \
         sc_biguint<(obits)> _butemp = (svar).read(); \
-        for (int i = 0; i < words; ++i) { \
-            int msb = ((i + 1) * VL_IDATASIZE) - 1; \
-            msb = (msb >= (obits)) ? ((obits)-1) : msb; \
-            (owp)[i] = _butemp.range(msb, i * VL_IDATASIZE).to_uint(); \
+        uint32_t* chunkp = _butemp.get_raw(); \
+        int32_t lsb = 0; \
+        while (lsb < obits - BITS_PER_DIGIT) { \
+            const uint32_t data = *chunkp; \
+            ++chunkp; \
+            _vl_insert_WI(owp.data(), data, lsb + BITS_PER_DIGIT - 1, lsb); \
+            lsb += BITS_PER_DIGIT; \
+        } \
+        if (lsb < obits) { \
+            const uint32_t msb_data = *chunkp; \
+            _vl_insert_WI(owp.data(), msb_data, obits - 1, lsb); \
         } \
         (owp)[words - 1] &= VL_MASK_E(obits); \
     }
@@ -492,13 +498,23 @@ static inline void VL_ASSIGNBIT_WO(int bit, WDataOutP owp) VL_MT_SAFE {
     { (svar).write(rd); }
 #define VL_ASSIGN_SBQ(obits, svar, rd) \
     { (svar).write(rd); }
+#define VL_SC_BITS_PER_DIGIT 30  // This comes from sc_nbdefs.h BITS_PER_DIGIT
 #define VL_ASSIGN_SBW(obits, svar, rwp) \
     { \
         sc_biguint<(obits)> _butemp; \
-        for (int i = 0; i < VL_WORDS_I(obits); ++i) { \
-            int msb = ((i + 1) * VL_IDATASIZE) - 1; \
-            msb = (msb >= (obits)) ? ((obits)-1) : msb; \
-            _butemp.range(msb, i* VL_IDATASIZE) = (rwp)[i]; \
+        int32_t lsb = 0; \
+        uint32_t* chunkp = _butemp.get_raw(); \
+        while (lsb + VL_SC_BITS_PER_DIGIT < (obits)) { \
+            static_assert(std::is_same<IData, EData>::value, "IData and EData missmatch"); \
+            const uint32_t data = VL_SEL_IWII(lsb + VL_SC_BITS_PER_DIGIT + 1, (rwp).data(), lsb, \
+                                              VL_SC_BITS_PER_DIGIT); \
+            *chunkp = data & VL_MASK_E(VL_SC_BITS_PER_DIGIT); \
+            ++chunkp; \
+            lsb += VL_SC_BITS_PER_DIGIT; \
+        } \
+        if (lsb < (obits)) { \
+            const uint32_t msb_data = VL_SEL_IWII((obits) + 1, (rwp).data(), lsb, (obits)-lsb); \
+            *chunkp = msb_data & VL_MASK_E((obits)-lsb); \
         } \
         (svar).write(_butemp); \
     }
@@ -573,18 +589,19 @@ static inline WDataOutP VL_EXTENDS_WW(int obits, int lbits, WDataOutP owp,
 // EMIT_RULE: VL_REDAND:  oclean=clean; lclean==clean; obits=1;
 #define VL_REDAND_II(lbits, lhs) ((lhs) == VL_MASK_I(lbits))
 #define VL_REDAND_IQ(lbits, lhs) ((lhs) == VL_MASK_Q(lbits))
-static inline IData VL_REDAND_IW(int lbits, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDAND_IW(int lbits, WDataInP const lwp) VL_PURE {
     const int words = VL_WORDS_I(lbits);
     EData combine = lwp[0];
     for (int i = 1; i < words - 1; ++i) combine &= lwp[i];
     combine &= ~VL_MASK_E(lbits) | lwp[words - 1];
+    // cppcheck-has-bug-suppress knownConditionTrueFalse
     return ((~combine) == 0);
 }
 
 // EMIT_RULE: VL_REDOR:  oclean=clean; lclean==clean; obits=1;
 #define VL_REDOR_I(lhs) ((lhs) != 0)
 #define VL_REDOR_Q(lhs) ((lhs) != 0)
-static inline IData VL_REDOR_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDOR_W(int words, WDataInP const lwp) VL_PURE {
     EData equal = 0;
     for (int i = 0; i < words; ++i) equal |= lwp[i];
     return (equal != 0);
@@ -651,7 +668,7 @@ static inline IData VL_REDXOR_64(QData r) VL_PURE {
     return static_cast<IData>(r);
 #endif
 }
-static inline IData VL_REDXOR_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDXOR_W(int words, WDataInP const lwp) VL_PURE {
     EData r = lwp[0];
     for (int i = 1; i < words; ++i) r ^= lwp[i];
     return VL_REDXOR_32(r);
@@ -670,7 +687,7 @@ static inline IData VL_COUNTONES_Q(QData lhs) VL_PURE {
     return VL_COUNTONES_I(static_cast<IData>(lhs)) + VL_COUNTONES_I(static_cast<IData>(lhs >> 32));
 }
 #define VL_COUNTONES_E VL_COUNTONES_I
-static inline IData VL_COUNTONES_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_COUNTONES_W(int words, WDataInP const lwp) VL_PURE {
     EData r = 0;
     for (int i = 0; i < words; ++i) r += VL_COUNTONES_E(lwp[i]);
     return r;
@@ -712,7 +729,7 @@ static inline IData VL_ONEHOT_I(IData lhs) VL_PURE {
 static inline IData VL_ONEHOT_Q(QData lhs) VL_PURE {
     return (((lhs & (lhs - 1)) == 0) & (lhs != 0));
 }
-static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_PURE {
     EData one = 0;
     for (int i = 0; (i < words); ++i) {
         if (lwp[i]) {
@@ -726,7 +743,7 @@ static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_MT_SAFE {
 
 static inline IData VL_ONEHOT0_I(IData lhs) VL_PURE { return ((lhs & (lhs - 1)) == 0); }
 static inline IData VL_ONEHOT0_Q(QData lhs) VL_PURE { return ((lhs & (lhs - 1)) == 0); }
-static inline IData VL_ONEHOT0_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_ONEHOT0_W(int words, WDataInP const lwp) VL_PURE {
     bool one = false;
     for (int i = 0; (i < words); ++i) {
         if (lwp[i]) {
@@ -753,7 +770,7 @@ static inline IData VL_CLOG2_Q(QData lhs) VL_PURE {
     for (; lhs != 0; ++shifts) lhs = lhs >> 1ULL;
     return shifts;
 }
-static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_PURE {
     const EData adjust = (VL_COUNTONES_W(words, lwp) == 1) ? 0 : 1;
     for (int i = words - 1; i >= 0; --i) {
         if (VL_UNLIKELY(lwp[i])) {  // Shorter worst case if predict not taken
@@ -768,7 +785,7 @@ static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_MT_SAFE {
     return 0;
 }
 
-static inline IData VL_MOSTSETBITP1_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_MOSTSETBITP1_W(int words, WDataInP const lwp) VL_PURE {
     // MSB set bit plus one; similar to FLS.  0=value is zero
     for (int i = words - 1; i >= 0; --i) {
         if (VL_UNLIKELY(lwp[i])) {  // Shorter worst case if predict not taken
@@ -797,7 +814,7 @@ static inline WDataOutP VL_OR_W(int words, WDataOutP owp, WDataInP const lwp,
     return owp;
 }
 // EMIT_RULE: VL_CHANGEXOR:  oclean=1; obits=32; lbits==rbits;
-static inline IData VL_CHANGEXOR_W(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline IData VL_CHANGEXOR_W(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     IData od = 0;
     for (int i = 0; (i < words); ++i) od |= (lwp[i] ^ rwp[i]);
     return od;
@@ -830,14 +847,14 @@ static inline WDataOutP VL_NOT_W(int words, WDataOutP owp, WDataInP const lwp) V
 #define VL_GTE_W(words, lwp, rwp) (_vl_cmp_w(words, lwp, rwp) >= 0)
 
 // Output clean, <lhs> AND <rhs> MUST BE CLEAN
-static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     EData nequal = 0;
     for (int i = 0; (i < words); ++i) nequal |= (lwp[i] ^ rwp[i]);
     return (nequal == 0);
 }
 
 // Internal usage
-static inline int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     for (int i = words - 1; i >= 0; --i) {
         if (lwp[i] > rwp[i]) return 1;
         if (lwp[i] < rwp[i]) return -1;
@@ -896,7 +913,7 @@ static inline IData VL_LTES_IQQ(int lbits, QData lhs, QData rhs) VL_PURE {
     return lhs_signed <= rhs_signed;
 }
 
-static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     const int words = VL_WORDS_I(lbits);
     int i = words - 1;
     // We need to flip sense if negative comparison
@@ -912,7 +929,7 @@ static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) 
 }
 
 //=========================================================================
-// Math
+// Expressions
 
 // Output NOT clean
 static inline WDataOutP VL_NEGATE_W(int words, WDataOutP owp, WDataInP const lwp) VL_MT_SAFE {
@@ -1009,12 +1026,14 @@ static inline WDataOutP VL_MULS_WWW(int lbits, WDataOutP owp, WDataInP const lwp
     if (lneg) {  // Negate lhs
         lwusp = lwstore;
         VL_NEGATE_W(words, lwstore, lwp);
+        // cppcheck-has-bug-suppress unreadVariable
         lwstore[words - 1] &= VL_MASK_E(lbits);  // Clean it
     }
     const EData rneg = VL_SIGN_E(lbits, rwp[words - 1]);
     if (rneg) {  // Negate rhs
         rwusp = rwstore;
         VL_NEGATE_W(words, rwstore, rwp);
+        // cppcheck-has-bug-suppress unreadVariable
         rwstore[words - 1] &= VL_MASK_E(lbits);  // Clean it
     }
     VL_MUL_W(words, owp, lwusp, rwusp);
@@ -1375,7 +1394,7 @@ static inline IData VL_STREAML_FAST_III(int lbits, IData ld, IData rd_log2) VL_P
     //
     // If lbits is not a multiple of the slice size (i.e., lbits % rd != 0),
     // then we end up with a "gap" in our reversed result. For example, if we
-    // have a 5-bit Verlilog signal (lbits=5) in an 8-bit C data type:
+    // have a 5-bit Verilog signal (lbits=5) in an 8-bit C data type:
     //
     //   ld = ---43210
     //
@@ -1900,7 +1919,7 @@ static inline WDataOutP VL_SEL_WWII(int obits, int lbits, WDataOutP owp, WDataIn
 }
 
 //======================================================================
-// Math needing insert/select
+// Expressions needing insert/select
 
 // Return QData from double (numeric)
 // EMIT_RULE: VL_RTOIROUND_Q_D:  oclean=dirty; lclean==clean/real
@@ -2135,6 +2154,17 @@ inline IData VL_CMP_NN(const std::string& lhs, const std::string& rhs, bool igno
 extern IData VL_ATOI_N(const std::string& str, int base) VL_PURE;
 
 extern IData VL_FGETS_NI(std::string& dest, IData fpi);
+
+//======================================================================
+// Dist functions
+
+extern IData VL_DIST_CHI_SQUARE(IData& seedr, IData udeg_of_free) VL_MT_SAFE;
+extern IData VL_DIST_ERLANG(IData& seedr, IData uk, IData umean) VL_MT_SAFE;
+extern IData VL_DIST_EXPONENTIAL(IData& seedr, IData umean) VL_MT_SAFE;
+extern IData VL_DIST_NORMAL(IData& seedr, IData umean, IData udeviation) VL_MT_SAFE;
+extern IData VL_DIST_POISSON(IData& seedr, IData umean) VL_MT_SAFE;
+extern IData VL_DIST_T(IData& seedr, IData udeg_of_free) VL_MT_SAFE;
+extern IData VL_DIST_UNIFORM(IData& seedr, IData ustart, IData uend) VL_MT_SAFE;
 
 //======================================================================
 // Conversion functions

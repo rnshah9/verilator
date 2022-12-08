@@ -54,11 +54,9 @@
 #include <unordered_set>
 #include <vector>
 // <iostream> avoided to reduce compile time
-#ifdef VL_THREADED
-# include <atomic>
-# include <mutex>
-# include <thread>
-#endif
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 // Allow user to specify their own include file
 #ifdef VL_VERILATED_INCLUDE
@@ -91,7 +89,8 @@ class VerilatedFstC;
 class VerilatedFstSc;
 class VerilatedScope;
 class VerilatedScopeNameMap;
-template <class, class> class VerilatedTrace;
+template <class, class>
+class VerilatedTrace;
 class VerilatedTraceConfig;
 class VerilatedVar;
 class VerilatedVarNameMap;
@@ -148,8 +147,6 @@ enum VerilatedVarFlags {
 // Return current thread ID (or 0), not super fast, cache if needed
 extern uint32_t VL_THREAD_ID() VL_MT_SAFE;
 
-#if VL_THREADED
-
 #define VL_LOCK_SPINS 50000  /// Number of times to spin for a mutex before yielding
 
 /// Mutex, wrapped to allow -fthread_safety checks
@@ -163,7 +160,7 @@ public:
     ~VerilatedMutex() = default;
     const VerilatedMutex& operator!() const { return *this; }  // For -fthread_safety
     /// Acquire/lock mutex
-    void lock() VL_ACQUIRE() {
+    void lock() VL_ACQUIRE() VL_MT_SAFE {
         // Try to acquire the lock by spinning.  If the wait is short,
         // avoids a trap to the OS plus OS scheduler overhead.
         if (VL_LIKELY(try_lock())) return;  // Short circuit loop
@@ -175,9 +172,9 @@ public:
         m_mutex.lock();
     }
     /// Release/unlock mutex
-    void unlock() VL_RELEASE() { m_mutex.unlock(); }
+    void unlock() VL_RELEASE() VL_MT_SAFE { m_mutex.unlock(); }
     /// Try to acquire mutex.  Returns true on success, and false on failure.
-    bool try_lock() VL_TRY_ACQUIRE(true) { return m_mutex.try_lock(); }
+    bool try_lock() VL_TRY_ACQUIRE(true) VL_MT_SAFE { return m_mutex.try_lock(); }
 };
 
 /// Lock guard for mutex (ala std::unique_lock), wrapped to allow -fthread_safety checks
@@ -189,46 +186,24 @@ private:
 
 public:
     /// Construct and hold given mutex lock until destruction or unlock()
-    explicit VerilatedLockGuard(VerilatedMutex& mutexr) VL_ACQUIRE(mutexr)
+    explicit VerilatedLockGuard(VerilatedMutex& mutexr) VL_ACQUIRE(mutexr) VL_MT_SAFE
         : m_mutexr(mutexr) {  // Need () or GCC 4.8 false warning
         m_mutexr.lock();
     }
     /// Destruct and unlock the mutex
     ~VerilatedLockGuard() VL_RELEASE() { m_mutexr.unlock(); }
     /// Unlock the mutex
-    void lock() VL_ACQUIRE() { m_mutexr.lock(); }
+    void lock() VL_ACQUIRE() VL_MT_SAFE { m_mutexr.lock(); }
     /// Lock the mutex
-    void unlock() VL_RELEASE() { m_mutexr.unlock(); }
+    void unlock() VL_RELEASE() VL_MT_SAFE { m_mutexr.unlock(); }
 };
-
-#else  // !VL_THREADED
-
-// Empty non-threaded mutex to avoid #ifdefs in consuming code
-class VerilatedMutex final {
-public:
-    void lock() {}  // LCOV_EXCL_LINE
-    void unlock() {}  // LCOV_EXCL_LINE
-};
-
-// Empty non-threaded lock guard to avoid #ifdefs in consuming code
-class VerilatedLockGuard final {
-    VL_UNCOPYABLE(VerilatedLockGuard);
-
-public:
-    explicit VerilatedLockGuard(VerilatedMutex&) {}
-    ~VerilatedLockGuard() = default;
-    void lock() {}  // LCOV_EXCL_LINE
-    void unlock() {}  // LCOV_EXCL_LINE
-};
-
-#endif  // VL_THREADED
 
 // Internals: Remember the calling thread at construction time, and make
 // sure later calls use same thread
 
 class VerilatedAssertOneThread final {
     // MEMBERS
-#if defined(VL_THREADED) && defined(VL_DEBUG)
+#ifdef VL_DEBUG
     uint32_t m_threadid;  // Thread that is legal
 public:
     // CONSTRUCTORS
@@ -249,7 +224,7 @@ public:
         }
     }
     static void fatal_different() VL_MT_SAFE;
-#else  // !VL_THREADED || !VL_DEBUG
+#else  // !VL_DEBUG
 public:
     void check() {}
 #endif
@@ -273,7 +248,7 @@ protected:
 public:
     /// Returns the VerilatedContext this model is instantiated under
     /// Used to get to e.g. simulation time via contextp()->time()
-    inline VerilatedContext* contextp() const { return &m_context; }
+    VerilatedContext* contextp() const VL_MT_SAFE { return &m_context; }
     /// Returns the hierarchical name of this module instance.
     virtual const char* hierName() const = 0;
     /// Returns the name of this model (the name of the generated model class).
@@ -283,7 +258,8 @@ public:
 
 private:
     // The following are for use by Verilator internals only
-    template <class, class> friend class VerilatedTrace;
+    template <class, class>
+    friend class VerilatedTrace;
     // Run-time trace configuration requested by this model
     virtual std::unique_ptr<VerilatedTraceConfig> traceConfig() const;
 };
@@ -299,7 +275,7 @@ private:
 public:
     explicit VerilatedModule(const char* namep);  // Create module with given hierarchy name
     ~VerilatedModule();
-    const char* name() const { return m_namep; }  ///< Return name of module
+    const char* name() const VL_MT_SAFE_POSTINIT { return m_namep; }  ///< Return name of module
 };
 
 //=========================================================================
@@ -341,7 +317,7 @@ class VerilatedContext VL_NOT_FINAL {
 protected:
     // MEMBERS
     // Slow path variables
-    mutable VerilatedMutex m_mutex;  // Mutex for most s_s/s_ns members, when VL_THREADED
+    mutable VerilatedMutex m_mutex;  // Mutex for most s_s/s_ns members
 
     struct Serialized {  // All these members serialized/deserialized
         // No std::strings or pointers or will serialize badly!
@@ -388,18 +364,14 @@ protected:
     // assumption is that the restore is allowed to pass different arguments
     struct NonSerializedCommandArgs {
         // Medium speed
-        bool m_argVecLoaded = false;  // Ever loaded argument list
         std::vector<std::string> m_argVec;  // Aargument list
+        bool m_argVecLoaded = false;  // Ever loaded argument list
     } m_args VL_GUARDED_BY(m_argMutex);
 
     // Implementation details
     const std::unique_ptr<VerilatedContextImpData> m_impdatap;
     // Number of threads to use for simulation (size of m_threadPool + 1 for main thread)
-#ifdef VL_THREADED
     unsigned m_threads = std::thread::hardware_concurrency();
-#else
-    const unsigned m_threads = 1;
-#endif
     // The thread pool shared by all models added to this context
     std::unique_ptr<VerilatedVirtualBase> m_threadPool;
     // The execution profiler shared by all models added to this context
@@ -455,9 +427,9 @@ public:
     VerilatedCovContext* coveragep() VL_MT_SAFE;
     /// Set debug level
     /// Debug is currently global, but for forward compatibility have a per-context method
-    static void debug(int val) VL_MT_SAFE;
+    static inline void debug(int val) VL_MT_SAFE;
     /// Return debug level
-    static int debug() VL_MT_SAFE;
+    static inline int debug() VL_MT_SAFE;
     /// Set current number of errors/assertions
     void errorCount(int val) VL_MT_SAFE;
     /// Increment current number of errors/assertions
@@ -468,7 +440,7 @@ public:
     void errorLimit(int val) VL_MT_SAFE;
     /// Return number of errors/assertions before stop
     int errorLimit() const VL_MT_SAFE { return m_s.m_errorLimit; }
-    /// Set to throw fatal error on $stop/non-fatal ettot
+    /// Set to throw fatal error on $stop/non-fatal error
     void fatalOnError(bool flag) VL_MT_SAFE;
     /// Return if to throw fatal error on $stop/non-fatal
     bool fatalOnError() const VL_MT_SAFE { return m_s.m_fatalOnError; }
@@ -519,7 +491,7 @@ public:
     ///
     /// * Else, time comes from the legacy 'double sc_time_stamp()' which
     /// must be a function defined by the user's wrapper.
-    uint64_t time() const VL_MT_SAFE;
+    inline uint64_t time() const VL_MT_SAFE;
     /// Set current simulation time. See time() for side effect details
     void time(uint64_t value) VL_MT_SAFE { m_s.m_time = value; }
     /// Advance current simulation time. See time() for side effect details
@@ -533,7 +505,7 @@ public:
     /// Get time precision as power-of-ten
     int timeprecision() const VL_MT_SAFE { return -m_s.m_timeprecision; }
     /// Return time precision as power-of-ten
-    void timeprecision(int value) VL_MT_SAFE;
+    inline void timeprecision(int value) VL_MT_SAFE;
     /// Get time precision as IEEE-standard text
     const char* timeprecisionString() const VL_MT_SAFE;
 
@@ -561,8 +533,8 @@ public:
     // METHODS - public but for internal use only
 
     // Internal: access to implementation class
-    VerilatedContextImp* impp() { return reinterpret_cast<VerilatedContextImp*>(this); }
-    const VerilatedContextImp* impp() const {
+    VerilatedContextImp* impp() VL_MT_SAFE { return reinterpret_cast<VerilatedContextImp*>(this); }
+    const VerilatedContextImp* impp() const VL_MT_SAFE {
         return reinterpret_cast<const VerilatedContextImp*>(this);
     }
 
@@ -609,9 +581,7 @@ public:  // But for internal use only
     // MEMBERS
     // Keep first so is at zero offset for fastest code
     VerilatedContext* const _vm_contextp__;  // Context for current model
-#ifdef VL_THREADED
     VerilatedEvalMsgQueue* __Vm_evalMsgQp;
-#endif
     explicit VerilatedSyms(VerilatedContext* contextp);  // Pass null for default context
     ~VerilatedSyms();
 };
@@ -647,16 +617,16 @@ public:  // But internals only - called from VerilatedModule's
     void varInsert(int finalize, const char* namep, void* datap, bool isParam,
                    VerilatedVarType vltype, int vlflags, int dims, ...) VL_MT_UNSAFE;
     // ACCESSORS
-    const char* name() const { return m_namep; }
-    const char* identifier() const { return m_identifierp; }
-    int8_t timeunit() const { return m_timeunit; }
-    inline VerilatedSyms* symsp() const { return m_symsp; }
+    const char* name() const VL_MT_SAFE_POSTINIT { return m_namep; }
+    const char* identifier() const VL_MT_SAFE_POSTINIT { return m_identifierp; }
+    int8_t timeunit() const VL_MT_SAFE_POSTINIT { return m_timeunit; }
+    VerilatedSyms* symsp() const VL_MT_SAFE_POSTINIT { return m_symsp; }
     VerilatedVar* varFind(const char* namep) const VL_MT_SAFE_POSTINIT;
     VerilatedVarNameMap* varsp() const VL_MT_SAFE_POSTINIT { return m_varsp; }
     void scopeDump() const;
     void* exportFindError(int funcnum) const;
     static void* exportFindNullError(int funcnum) VL_MT_SAFE;
-    static inline void* exportFind(const VerilatedScope* scopep, int funcnum) VL_MT_SAFE {
+    static void* exportFind(const VerilatedScope* scopep, int funcnum) VL_MT_SAFE {
         if (VL_UNLIKELY(!scopep)) return exportFindNullError(funcnum);
         if (VL_LIKELY(funcnum < scopep->m_funcnumMax)) {
             // m_callbacksp must be declared, as Max'es are > 0
@@ -692,17 +662,15 @@ class Verilated final {
     static VerilatedContext* s_lastContextp;  // Last context constructed/attached
 
     // Not covered by mutex, as per-thread
-    static VL_THREAD_LOCAL struct ThreadLocal {
+    static thread_local struct ThreadLocal {
         // No non-POD objects here due to this:
         // Internal note: Globals may multi-construct, see verilated.cpp top.
 
         // Fast path
         VerilatedContext* t_contextp = nullptr;  // Thread's context
-#ifdef VL_THREADED
         uint32_t t_mtaskId = 0;  // mtask# executing on this thread
         // Messages maybe pending on thread, needs end-of-eval calls
         uint32_t t_endOfEvalReqd = 0;
-#endif
         const VerilatedScope* t_dpiScopep = nullptr;  // DPI context scope
         const char* t_dpiFilename = nullptr;  // DPI context filename
         int t_dpiLineno = 0;  // DPI context line number
@@ -725,7 +693,7 @@ public:
     /// Return debug level
     /// When multithreaded this may not immediately react to another thread
     /// changing the level (no mutex)
-    static inline int debug() VL_MT_SAFE { return s_debug; }
+    static int debug() VL_MT_SAFE { return s_debug; }
 #else
     /// Return constant 0 debug level, so C++'s optimizer rips up
     static constexpr int debug() VL_PURE { return 0; }
@@ -750,7 +718,7 @@ public:
         lastContextp(contextp);
     }
     /// Return the VerilatedContext for the current thread
-    static VerilatedContext* threadContextp() {
+    static VerilatedContext* threadContextp() VL_MT_SAFE {
         if (VL_UNLIKELY(!t_s.t_contextp)) t_s.t_contextp = lastContextp();
         return t_s.t_contextp;
     }
@@ -893,6 +861,8 @@ public:
     // Internal: Throw signal assertion
     static void nullPointerError(const char* filename, int linenum) VL_ATTR_NORETURN VL_MT_SAFE;
     static void overWidthError(const char* signame) VL_ATTR_NORETURN VL_MT_SAFE;
+    static void scTimePrecisionError(int sc_prec, int vl_prec) VL_ATTR_NORETURN VL_MT_SAFE;
+    static void scTraceBeforeElaborationError() VL_ATTR_NORETURN VL_MT_SAFE;
 
     // Internal: Get and set DPI context
     static const VerilatedScope* dpiScope() VL_MT_SAFE { return t_s.t_dpiScopep; }
@@ -909,7 +879,6 @@ public:
     static int dpiLineno() VL_MT_SAFE { return t_s.t_dpiLineno; }
     static int exportFuncNum(const char* namep) VL_MT_SAFE;
 
-#ifdef VL_THREADED
     // Internal: Set the mtaskId, called when an mtask starts
     // Per thread, so no need to be in VerilatedContext
     static void mtaskId(uint32_t id) VL_MT_SAFE { t_s.t_mtaskId = id; }
@@ -923,16 +892,13 @@ public:
     }
     // Internal: Called at end of eval loop
     static void endOfEval(VerilatedEvalMsgQueue* evalMsgQp) VL_MT_SAFE;
-#endif
 
 private:
-#ifdef VL_THREADED
     static void endOfThreadMTaskGuts(VerilatedEvalMsgQueue* evalMsgQp) VL_MT_SAFE;
-#endif
 };
 
-inline void VerilatedContext::debug(int val) VL_MT_SAFE { Verilated::debug(val); }
-inline int VerilatedContext::debug() VL_MT_SAFE { return Verilated::debug(); }
+void VerilatedContext::debug(int val) VL_MT_SAFE { Verilated::debug(val); }
+int VerilatedContext::debug() VL_MT_SAFE { return Verilated::debug(); }
 
 //=========================================================================
 // Data Types
@@ -945,6 +911,36 @@ inline int VerilatedContext::debug() VL_MT_SAFE { return Verilated::debug(); }
 #include "verilated_funcs.h"
 
 //======================================================================
+
+void VerilatedContext::timeprecision(int value) VL_MT_SAFE {
+    if (value < 0) value = -value;  // Stored as 0..15
+#if VM_SC
+    int sc_prec = 99;
+#endif
+    {
+        const VerilatedLockGuard lock{m_mutex};
+        m_s.m_timeprecision = value;
+#if VM_SC
+        const sc_time sc_res = sc_get_time_resolution();
+        if (sc_res == sc_time(1, SC_SEC)) {
+            sc_prec = 0;
+        } else if (sc_res == sc_time(1, SC_MS)) {
+            sc_prec = 3;
+        } else if (sc_res == sc_time(1, SC_US)) {
+            sc_prec = 6;
+        } else if (sc_res == sc_time(1, SC_NS)) {
+            sc_prec = 9;
+        } else if (sc_res == sc_time(1, SC_PS)) {
+            sc_prec = 12;
+        } else if (sc_res == sc_time(1, SC_FS)) {
+            sc_prec = 15;
+        }
+#endif
+    }
+#if VM_SC
+    if (VL_UNLIKELY(value != sc_prec)) Verilated::scTimePrecisionError(sc_prec, value);
+#endif
+}
 
 #undef VERILATOR_VERILATED_H_INTERNAL_
 #endif  // Guard

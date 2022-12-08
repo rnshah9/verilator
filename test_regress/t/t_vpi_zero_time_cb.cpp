@@ -15,23 +15,24 @@
 
 #else
 
-#include "Vt_vpi_zero_time_cb.h"
 #include "verilated.h"
-#include "svdpi.h"
-#include <dlfcn.h>
-
-#include "Vt_vpi_zero_time_cb__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
+
+#include "Vt_vpi_zero_time_cb.h"
+#include "Vt_vpi_zero_time_cb__Dpi.h"
+#include "svdpi.h"
+
+#include <dlfcn.h>
 
 #endif
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
 #include "TestCheck.h"
 #include "TestSimulator.h"
 #include "TestVpi.h"
@@ -104,7 +105,7 @@ void (*vlog_startup_routines[])() = {vpi_compat_bootstrap, 0};
 
 #else
 
-int main(int argc, char** argv, char** env) {
+int main(int argc, char** argv) {
     const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
 
     uint64_t sim_time = 1100;
@@ -137,7 +138,7 @@ int main(int argc, char** argv, char** env) {
         void* lib = dlopen(filenamep, RTLD_LAZY);
         void* bootstrap = dlsym(lib, "vpi_compat_bootstrap");
         if (!bootstrap) {
-            const std::string msg = std::string("%Error: Could not dlopen ") + filenamep;
+            const std::string msg = std::string{"%Error: Could not dlopen "} + filenamep;
             vl_fatal(__FILE__, __LINE__, "main", msg.c_str());
         }
         ((void (*)(void))bootstrap)();

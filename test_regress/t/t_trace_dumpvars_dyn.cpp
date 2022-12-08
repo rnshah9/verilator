@@ -6,10 +6,11 @@
 // any use, without warranty, 2022 by Wilson Snyder.
 // SPDX-License-Identifier: CC0-1.0
 
-#include <memory>
 #include <verilated.h>
 #include <verilated_fst_c.h>
 #include <verilated_vcd_c.h>
+
+#include <memory>
 
 #include VM_PREFIX_INCLUDE
 
@@ -18,7 +19,7 @@ double sc_time_stamp() { return (double)main_time; }
 
 const unsigned long long dt_2 = 3;
 
-int main(int argc, char** argv, char** env) {
+int main(int argc, char** argv) {
     std::unique_ptr<VM_PREFIX> top{new VM_PREFIX("top")};
 
     Verilated::debug(0);
