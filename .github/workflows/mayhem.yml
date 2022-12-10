@@ -59,7 +59,8 @@ jobs:
       fail-fast: false
       matrix:
         mayhemfile:
-          - mayhem/Mayhemfile
+          - mayhem/Mayhemfile_verilator_bin
+          - mayhem/Mayhemfile_VL_DBG_MSGF
 
     steps:
       - uses: actions/checkout@v3

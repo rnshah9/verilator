@@ -1,0 +1,6 @@
+project: verilator
+target: verilator-bin
+
+cmds:
+  - cmd: /fuzz_VL_DBG_MSGF
+    libfuzzer: true
