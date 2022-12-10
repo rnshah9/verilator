@@ -1,5 +1,5 @@
 project: verilator
-target: verilator-bin
+target: vl-dbg-msgf
 
 cmds:
   - cmd: /fuzz_VL_DBG_MSGF
